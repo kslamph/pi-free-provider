@@ -119,7 +119,7 @@ describe("zen source capabilities", () => {
 		await source.refreshCapabilities(lineup.map((e) => e.id));
 		// longcat exists in config but not in the trimmed modelsdev fixture
 		const caps = source.resolveCapabilities("longcat-2.5-preview-free");
-		expect(caps.source).toBe("config");
+		expect(caps.source).toBe("opencode");
 		expect(caps.reasoning).toBe(true);
 		expect(caps.contextWindow).toBe(1_000_000);
 		expect(caps.input).toEqual(["text", "image"]);
@@ -131,9 +131,9 @@ describe("zen source capabilities", () => {
 		const lineup = await source.fetchLineup(CRED);
 		await source.refreshCapabilities(lineup.map((e) => e.id));
 		const caps = source.resolveCapabilities("big-pickle");
-		expect(caps.source).toBe("config");
+		expect(caps.source).toBe("opencode");
 		const muse = source.resolveCapabilities("muse-spark-1.3-contributor-free");
-		expect(muse.source).toBe("config");
+		expect(muse.source).toBe("opencode");
 	});
 
 	it("falls to defaults for an id in neither source", async () => {

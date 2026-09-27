@@ -113,7 +113,7 @@ describe("mergeZenCapabilities", () => {
 			reasoning: true,
 			toggle: false,
 			name: "From Config",
-			source: "config",
+			source: "opencode",
 		});
 	});
 
@@ -137,7 +137,7 @@ describe("mergeZenCapabilities", () => {
 		expect(configWins.maxTokens).toBe(65_432);
 		expect(configWins.input).toEqual(["text"]);
 		expect(configWins.name).toBe("From Config");
-		expect(configWins.source).toBe("config");
+		expect(configWins.source).toBe("opencode");
 	});
 
 	it("neither: zen defaults, reasoning on, source default", () => {

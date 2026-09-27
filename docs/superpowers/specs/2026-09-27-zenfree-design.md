@@ -83,7 +83,7 @@ or unreachable registry → baked-in UA + warning; nothing blocks.
      model reasons), no effort control → `thinkingLevelMap: null` (levels hidden, reasoning
      sent verbatim — matches pi's built-in opencode catalog treatment).
   Cost is always `{ input: 0, output: 0 }` (free). Source recorded as
-  `"config" | "modelsdev" | "default"` for status display.
+  `"opencode" | "modelsdev" | "default"` for status display.
 - **Transport assignment** (live-verified 2026-09-27): `package === "aisdk:@ai-sdk/openai"` ⇒
   `openai-responses` under **zenfree.res** (muse-spark), anything else ⇒ `openai-completions`;
   the `muse-spark-*` prefix is the fallback when the config carries no package. Both transports

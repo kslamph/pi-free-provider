@@ -138,7 +138,8 @@ export interface ZenCapabilities {
 	reasoning: boolean;
 	toggle: boolean;
 	name?: string;
-	source: "config" | "modelsdev" | "default";
+	/** Where the limits came from: opencode's console config, models.dev, or built-in defaults. */
+	source: "opencode" | "modelsdev" | "default";
 }
 
 /**
@@ -148,7 +149,7 @@ export interface ZenCapabilities {
  */
 export function mergeZenCapabilities(config: ZenModelEntry | undefined, dev: FeedEntry | undefined): ZenCapabilities {
 	const source: ZenCapabilities["source"] =
-		config?.limit?.context !== undefined ? "config" : dev?.contextWindow !== undefined ? "modelsdev" : "default";
+		config?.limit?.context !== undefined ? "opencode" : dev?.contextWindow !== undefined ? "modelsdev" : "default";
 	const merged: ZenCapabilities = {
 		contextWindow: config?.limit?.context ?? dev?.contextWindow ?? ZEN_DEFAULTS.contextWindow,
 		maxTokens: config?.limit?.output ?? dev?.maxTokens ?? ZEN_DEFAULTS.maxTokens,

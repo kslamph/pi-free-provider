@@ -30,7 +30,7 @@ export interface ModelRow {
 	name: string;
 	contextWindow: number;
 	maxTokens: number;
-	source: "openrouter" | "vercel" | "config" | "modelsdev" | "default";
+	source: "openrouter" | "vercel" | "opencode" | "modelsdev" | "default";
 }
 
 export interface TuiDeps {

@@ -47,7 +47,7 @@ describe("zen bootstrap", () => {
 	];
 
 	function zenPieces() {
-		const caps = { contextWindow: 200_000, maxTokens: 32_000, input: ["text"] as ("text" | "image")[], reasoning: true, toggle: false, source: "config" as const };
+		const caps = { contextWindow: 200_000, maxTokens: 32_000, input: ["text"] as ("text" | "image")[], reasoning: true, toggle: false, source: "opencode" as const };
 		const registered: { id: string; config: Record<string, unknown> }[] = [];
 		const registerProvider = (id: string, config: unknown) => registered.push({ id, config: config as Record<string, unknown> });
 		return { caps, registered, registerProvider };
