@@ -201,3 +201,162 @@ export function createClinefreeStream(deps: ClinefreeStreamDeps) {
 function notifyInvalid(deps: ClinefreeStreamDeps): void {
 	deps.notify("clinefree: credential rejected (401) — re-authenticate via /clinefree");
 }
+
+// ── zenfree stream (spec §zen-6) ─────────────────────────────────────────────
+
+import { createConversationIdentity } from "./sources/opencode-identity.ts";
+import { turnKeyOf } from "./sources/opencode-identity.ts";
+import type { ZenContractResult } from "./sources/opencode-contract.ts";
+
+const zenIdentity = createConversationIdentity();
+
+/** One zen session id per conversation; /new, resume and fork start a new one. */
+export function resetZenConversation(reason: string): void {
+	if (reason === "new" || reason === "resume" || reason === "fork") zenIdentity.reset();
+}
+
+export interface ZenStreamDeps {
+	getCredential(): Credential | undefined;
+	getContract(): ZenContractResult;
+	/** The credential was rejected (401) — clear it so /zenfree re-auths. */
+	onInvalidated(): void;
+	/** The gateway 426'd our client version — force a contract re-check. */
+	onVersionStale(): void;
+	notify(message: string): void;
+}
+
+function isUpgradeRequired(capturedStatus: number, problem: string): boolean {
+	return capturedStatus === 426 || /\b426\b|upgrade required/i.test(problem);
+}
+
+function isFreeTierGate(capturedStatus: number, problem: string): boolean {
+	return (capturedStatus === 403 || /\b403\b/.test(problem)) && /freetier|can only be used from within/i.test(problem);
+}
+
+export function createZenfreeStream(deps: ZenStreamDeps) {
+	const fallback = getApiProvider("openai-completions");
+	if (!fallback) throw new Error("zenfree: no openai-completions API provider registered in pi");
+
+	let invalidNotified = false;
+
+	return function zenfreeStreamSimple(
+		model: Model<Api>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	): AssistantMessageEventStream {
+		const out = createAssistantMessageEventStream();
+
+		void (async () => {
+			try {
+				const cred = deps.getCredential();
+				if (!cred?.apiKey) {
+					emitError(out, model, "zenfree: no workspace key configured — run /zenfree to add one");
+					return;
+				}
+
+				const contract = deps.getContract();
+				const captured = { status: 0 };
+				const impl = getApiProvider(model.api) ?? fallback;
+				const attemptOptions: SimpleStreamOptions = {
+					...options,
+					apiKey: cred.apiKey,
+					headers: {
+						...options?.headers,
+						...contract.headers,
+						Authorization: `Bearer ${cred.apiKey}`,
+						"x-opencode-session": zenIdentity.sessionId(),
+						"x-opencode-request": zenIdentity.requestId(turnKeyOf(context.messages)),
+					},
+					onResponse: (response) => {
+						captured.status = response.status;
+					},
+				};
+
+				const sub = impl.streamSimple(model, context, attemptOptions);
+				const buffered: AssistantMessageEvent[] = [];
+				let relayed = false;
+
+				const invalidate = (): void => {
+					deps.onInvalidated();
+					if (!invalidNotified) {
+						invalidNotified = true;
+						deps.notify("zenfree: credential rejected (401) — re-add your workspace key via /zenfree");
+					}
+				};
+
+				const handleProblem = (problem: string): boolean => {
+					if (!relayed && isUnauthorized(captured.status, problem)) {
+						invalidate();
+						emitError(out, model, "zenfree: credential rejected (401) — run /zenfree to re-add your key");
+						return true;
+					}
+					if (!relayed && isUpgradeRequired(captured.status, problem)) {
+						deps.onVersionStale();
+						deps.notify("zenfree: gateway reports a stale client version (426) — re-checking the official CLI version; retry shortly");
+						emitError(out, model, `zenfree: client version rejected (426) — ${problem}`);
+						return true;
+					}
+					if (!relayed && isFreeTierGate(captured.status, problem)) {
+						deps.notify("zenfree: the free tier only serves agentic requests (streaming + tools) — this call was rejected");
+						emitError(out, model, `zenfree: free-tier gate (403) — ${problem}`);
+						return true;
+					}
+					return false;
+				};
+
+				for await (const event of sub) {
+					if (event.type === "done") {
+						for (const bufferedEvent of buffered) out.push(bufferedEvent);
+						buffered.length = 0;
+						out.push(event);
+						out.end();
+						return;
+					}
+
+					if (event.type === "error") {
+						const problem = (event as { error?: { errorMessage?: string } }).error?.errorMessage ?? "unknown provider error";
+						if (handleProblem(problem)) return;
+						for (const bufferedEvent of buffered) out.push(bufferedEvent);
+						buffered.length = 0;
+						out.push(event);
+						out.end();
+						return;
+					}
+
+					if (!relayed) {
+						if (captured.status === 0) {
+							buffered.push(event);
+							continue;
+						}
+						if (isUnauthorized(captured.status, "") || isUpgradeRequired(captured.status, "") || isFreeTierGate(captured.status, "")) {
+							if (handleProblem(`HTTP ${captured.status}`)) return;
+						}
+						for (const bufferedEvent of buffered) out.push(bufferedEvent);
+						buffered.length = 0;
+						out.push(event);
+						relayed = true;
+						continue;
+					}
+
+					out.push(event);
+				}
+
+				if (!relayed && buffered.length === 0) {
+					emitError(out, model, "zenfree: provider stream ended without events");
+					return;
+				}
+				for (const bufferedEvent of buffered) out.push(bufferedEvent);
+				out.end();
+			} catch (error) {
+				if (options?.signal?.aborted) {
+					out.push({ type: "error", reason: "aborted", error: baseMessage(model, "aborted") });
+					out.end();
+					return;
+				}
+				emitError(out, model, `zenfree: request error — ${error instanceof Error ? error.message : String(error)}`);
+			}
+		})();
+
+		return out;
+	};
+}

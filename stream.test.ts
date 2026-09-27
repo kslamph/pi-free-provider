@@ -49,7 +49,8 @@ vi.mock("./auth.ts", async (importOriginal) => {
 
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import { refreshClineToken } from "./auth.ts";
-import { createClinefreeStream, resetConversation } from "./stream.ts";
+import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation } from "./stream.ts";
+import { BAKED_IN_ZEN_CONTRACT, type ZenContractResult } from "./sources/opencode-contract.ts";
 import type { ContractResult } from "./contract.ts";
 import type { Credential } from "./state.ts";
 
@@ -203,5 +204,132 @@ describe("401 via onResponse", () => {
 		const deps = makeDeps({ mode: "apiKey", apiKey: "sk-x" });
 		await collect(createClinefreeStream(deps)(model, context));
 		expect(deps.onInvalidated).not.toHaveBeenCalled();
+	});
+});
+
+
+// ── zenfree stream ────────────────────────────────────────────────────────────
+
+const zenContract: ZenContractResult = BAKED_IN_ZEN_CONTRACT;
+const zenModelCompletions = { id: "zenfree/big-pickle", api: "openai-completions" } as never;
+const zenModelResponses = { id: "zenfree.res/muse-spark-1.3-contributor-free", api: "openai-responses" } as never;
+const zenContext = {
+	messages: [{ role: "user", timestamp: 42, content: "hello there" }],
+} as never;
+
+function zenDeps(cred: Credential | undefined) {
+	return {
+		getCredential: () => cred,
+		getContract: () => zenContract,
+		onInvalidated: vi.fn(),
+		onVersionStale: vi.fn(),
+		notify: vi.fn(),
+	};
+}
+
+function implsFor(completions: ReturnType<typeof fakeImpl>, responses: ReturnType<typeof fakeImpl>) {
+	return (api: string) => (api === "openai-responses" ? responses : completions);
+}
+
+describe("createZenfreeStream", () => {
+	it("injects Authorization, identity headers, and the contract UA", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const stream = createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }));
+		const events = await collect(stream(zenModelCompletions, zenContext));
+		expect(events.map((e) => e.type)).toEqual(["start", "done"]);
+		const headers = impl.calls[0]!.options.headers as Record<string, string>;
+		expect(headers.Authorization).toBe("Bearer oc_sk-x");
+		expect(headers["x-opencode-client"]).toBe("cli");
+		expect(headers["User-Agent"]).toBe("opencode/latest/2.0.18/cli");
+		expect(headers["x-opencode-session"]).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+		expect(headers["x-opencode-request"]).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+
+		// session stable across calls; request id stable for the same turn
+		await collect(stream(zenModelCompletions, zenContext));
+		const second = impl.calls[1]!.options.headers as Record<string, string>;
+		expect(second["x-opencode-session"]).toBe(headers["x-opencode-session"]);
+		expect(second["x-opencode-request"]).toBe(headers["x-opencode-request"]);
+		resetZenConversation("new");
+		await collect(stream(zenModelCompletions, zenContext));
+		const third = impl.calls[2]!.options.headers as Record<string, string>;
+		expect(third["x-opencode-session"]).not.toBe(headers["x-opencode-session"]);
+		// a different turn mints a fresh request id
+		const newTurnContext = { messages: [{ role: "user", timestamp: 43, content: "next question" }] } as never;
+		await collect(stream(zenModelCompletions, newTurnContext));
+		const fourth = impl.calls[3]!.options.headers as Record<string, string>;
+		expect(fourth["x-opencode-request"]).not.toBe(third["x-opencode-request"]);
+	});
+
+	it("routes a responses-api model through the responses impl with identity headers", async () => {
+		const completions = fakeImpl();
+		const responses = fakeImpl();
+		(getApiProvider as unknown as Mock).mockImplementation(implsFor(completions, responses));
+		const stream = createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }));
+		await collect(stream(zenModelResponses, zenContext));
+		expect(responses.calls).toHaveLength(1);
+		expect(completions.calls).toHaveLength(0);
+		const headers = responses.calls[0]!.options.headers as Record<string, string>;
+		expect(headers["x-opencode-session"]).toMatch(/^ses_/);
+		expect(headers["x-opencode-request"]).toMatch(/^msg_/);
+	});
+
+	it("marks the credential invalid on 401 without retrying", async () => {
+		const impl = fakeImpl([
+			{ type: "start" } as AssistantMessageEvent,
+			{ type: "error", error: { errorMessage: "Unauthorized" } } as never,
+		]);
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
+		expect(impl.calls).toHaveLength(1);
+		expect(deps.onInvalidated).toHaveBeenCalled();
+		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("401"));
+		expect(events.map((e) => e.type)).toEqual(["error"]);
+	});
+
+	it("notifies and forces a version re-check on 426", async () => {
+		const impl = fakeImpl([
+			{ type: "start" } as AssistantMessageEvent,
+			{ type: "error", error: { errorMessage: "426 Upgrade Required: OpenCode 1.17.0 or newer is required" } } as never,
+		]);
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
+		expect(deps.onVersionStale).toHaveBeenCalled();
+		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("version"));
+		expect(deps.onInvalidated).not.toHaveBeenCalled();
+		expect(events.map((e) => e.type)).toEqual(["error"]);
+	});
+
+	it("relays a 403 FreeTierError with the agentic-shape hint, no invalidation", async () => {
+		const impl = fakeImpl([
+			{ type: "start" } as AssistantMessageEvent,
+			{ type: "error", error: { errorMessage: "403 FreeTierError: can only be used from within OpenCode" } } as never,
+		]);
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
+		expect(deps.onInvalidated).not.toHaveBeenCalled();
+		expect(deps.notify).toHaveBeenCalledWith(expect.stringMatching(/agentic|tools/i));
+		expect(events.map((e) => e.type)).toEqual(["error"]);
+	});
+
+	it("relays a 429 quota error without invalidating", async () => {
+		const impl = fakeImpl([
+			{ type: "start" } as AssistantMessageEvent,
+			{ type: "error", error: { errorMessage: "429 FreeUsageLimitError: IP quota exhausted" } } as never,
+		]);
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
+		expect(deps.onInvalidated).not.toHaveBeenCalled();
+		expect(deps.onVersionStale).not.toHaveBeenCalled();
+	});
+
+	it("errors immediately without a credential", async () => {
+		const deps = zenDeps(undefined);
+		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
+		expect(events.map((e) => e.type)).toEqual(["error"]);
 	});
 });
