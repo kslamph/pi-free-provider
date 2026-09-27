@@ -41,25 +41,25 @@
       "id": "4",
       "subject": "Task 4: feeds.ts — models.dev + Vercel clients",
       "description": "FeedEntry, reduceModelsDev (openrouter block: limit.context/output, modalities.input, reasoning_options), reduceVercel (context_window/max_tokens), fetchers with fixed URLs, throw on !ok, {} on malformed. Fixtures with the six real free models incl. deepseek 384000 vs vercel 32768. Commit feat: capability feed clients.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing feeds.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624824,
-      "updatedAt": 1790515885114
+      "updatedAt": 1790515961237
     },
     {
       "id": "5",
       "subject": "Task 5: capabilities.ts — precedence resolution",
       "description": "ModelCapabilities, DEFAULT_CAPABILITIES (256000/32000/[text]/false), resolveCapabilities openrouter exact→slug then vercel exact→slug then defaults; modalities ∩ {text,image}. Tests pin deepseek 384000, pixel-canary 262144 vercel, space-bunny openrouter, unknown→defaults, gemini slug rule. Commit feat: capability precedence.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing capabilities.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624824,
-      "updatedAt": 1790515624824
+      "updatedAt": 1790515961238
     },
     {
       "id": "6",
