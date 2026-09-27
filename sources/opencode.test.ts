@@ -161,16 +161,12 @@ describe("zen source capabilities", () => {
 });
 
 describe("zen source transport + status", () => {
-	it("splits transport by package field with the prefix set as fallback", async () => {
+	it("routes every current free model through completions (live: /responses is tier-gated)", async () => {
 		const { deps } = makeDeps();
 		const source = createZenSource(deps);
 		await source.fetchLineup(CRED);
-		expect(source.resolveTransport("muse-spark-1.3-contributor-free")).toBe("openai-responses");
+		expect(source.resolveTransport("muse-spark-1.3-contributor-free")).toBe("openai-completions");
 		expect(source.resolveTransport("big-pickle")).toBe("openai-completions");
-		// no config loaded: prefix fallback still routes muse-spark ids
-		const fresh = createZenSource(deps);
-		expect(fresh.resolveTransport("muse-spark-2.0-free")).toBe("openai-responses");
-		expect(fresh.resolveTransport("mimo-v2.6-flash-free")).toBe("openai-completions");
 	});
 
 	it("status reports timestamps and the contract source", async () => {

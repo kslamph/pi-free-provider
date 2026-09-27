@@ -81,11 +81,13 @@ or unreachable registry → baked-in UA + warning; nothing blocks.
      sent verbatim — matches pi's built-in opencode catalog treatment).
   Cost is always `{ input: 0, output: 0 }` (free). Source recorded as
   `"config" | "modelsdev" | "default"` for status display.
-- **Transport assignment**: `package === "aisdk:@ai-sdk/openai"` ⇒ `openai-responses` (zenfree.res);
-  anything else (absent, `openai-compatible`, anthropic/google — backend routing only) ⇒
-  `openai-completions`. Fallback when `package` is absent: baked prefix override set
-  (`muse-spark-*` → responses). A future free responses model missing both signals lands on
-  `zenfree` and surfaces as a provider error naming the model (§zen-9 risks — warned, not silent).
+- **Transport assignment** (corrected by live evidence 2026-09-27): every current free model rides
+  **chat completions** under `zenfree`. The gateway 403-gates `/responses` for the free tier
+  ("can only be used from within OpenCode" — even with valid identity headers), and muse-spark
+  reaches an upstream via `/chat/completions`. The `zenfree.res` provider id and the
+  responses-transport machinery stay reserved: a prefix override list (currently empty) lights
+  them up if OpenCode ever opens the Responses path to the free tier. The config's model-level
+  `package` field (`aisdk:@ai-sdk/openai`) is backend routing, not a client transport signal.
 
 ## zen-5. Auth (key-required)
 

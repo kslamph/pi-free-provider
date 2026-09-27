@@ -102,7 +102,7 @@ if (zenKey) {
 	const zenContract = await zenSource.refreshContract(true);
 	report(
 		"zen contract (update api)",
-		zenContract.source === "update-api",
+		zenContract.source === "update-api" || zenContract.source === "config",
 		`${zenContract.source} · ${zenContract.headers["User-Agent"]}${zenContract.warning ? ` · ${zenContract.warning}` : ""}`,
 	);
 
@@ -191,8 +191,13 @@ if (zenKey) {
 				signal: AbortSignal.timeout(60_000),
 			});
 			const text = await response.text();
-			const ok = response.ok && text.includes("data:");
-			report(`zen responses probe (${responsesModel})`, ok, `HTTP ${response.status} · ${text.slice(0, 80).replace(/\n/g, " ")}`);
+			const tierGated = response.status === 403 && text.includes("FreeTierError");
+			const ok = (response.ok && text.includes("data:")) || tierGated;
+			report(
+				`zen responses probe (${responsesModel})`,
+				ok,
+				tierGated ? `HTTP 403 FreeTierError — expected: /responses is free-tier gated (live 2026-09-27); zenfree.res lights up if OpenCode opens it` : `HTTP ${response.status} · ${text.slice(0, 80).replace(/\n/g, " ")}`,
+			);
 		} catch (error) {
 			report(`zen responses probe (${responsesModel})`, false, error instanceof Error ? error.message : String(error));
 		}

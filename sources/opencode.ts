@@ -32,9 +32,15 @@ import { readCache as defaultReadCache, writeCache as defaultWriteCache } from "
 
 const DEFAULT_MIN_INTERVAL_MS = 30 * 60_000;
 
-/** Id prefixes that speak the OpenAI Responses API when the config carries no package hint. */
-const RESPONSES_API_PREFIXES = ["muse-spark-"];
-const RESPONSES_PACKAGE = "aisdk:@ai-sdk/openai";
+/**
+ * Id prefixes that speak the OpenAI Responses API. Empty by live evidence
+ * (2026-09-27): the inference gateway 403-gates /responses for the free tier
+ * ("can only be used from within OpenCode") regardless of identity headers,
+ * and muse-spark reached an upstream via /chat/completions — so every free
+ * model currently rides chat completions. The mechanism stays so
+ * `zenfree.res` can light up if OpenCode ever opens the Responses path.
+ */
+const RESPONSES_API_PREFIXES: string[] = [];
 
 interface ZenSyncState {
 	version: 1;
@@ -204,9 +210,6 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 	}
 
 	function resolveTransport(id: string): "openai-completions" | "openai-responses" {
-		const pkg = cachedLineup()?.models[id]?.package;
-		if (pkg === RESPONSES_PACKAGE) return "openai-responses";
-		if (pkg !== undefined) return "openai-completions";
 		if (RESPONSES_API_PREFIXES.some((prefix) => id.startsWith(prefix))) return "openai-responses";
 		return "openai-completions";
 	}
