@@ -77,25 +77,25 @@
       "id": "7",
       "subject": "Task 7: sources/ — FreeModelSource (cline)",
       "description": "sources/types.ts + sources/cline.ts createClineSource: fetchLineup (contract headers, free only, cache fallback), refreshContract (3 tags, contract files, skip on unchanged, baked-in fallback), refreshCapabilities (10-min TTL, cache reuse), resolveCapabilities; state.json tags/shas/timestamps. Fixture recommended-models.json. Commit feat: cline FreeModelSource.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing sources/cline.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790516085789
+      "updatedAt": 1790516218087
     },
     {
       "id": "8",
       "subject": "Task 8: auth.ts — API key + OAuth device flow",
       "description": "Credential, formatAuthorization (Bearer, workos: idempotent), isTokenStale (5-min buffer), validateCredential (users/me), refreshClineToken (rotating, single-flight), runDeviceFlow (WorkOS client_01K3A541FN8TA3EPPHTD2325AR → register). Commit feat: auth.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing auth.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790515624825
+      "updatedAt": 1790516218088
     },
     {
       "id": "9",
