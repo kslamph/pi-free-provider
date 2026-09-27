@@ -34,15 +34,20 @@ All verified from `~/opencode` source + `~/piext/pi-multikey` live probes (2026-
   version < 1.17.0 → HTTP 426; `x-opencode-session` missing or not `ses_` + 12 lowercase-hex
   + 14 base62 → HTTP 403 FreeTierError; non-agentic requests (no stream, no tools) → 403
   FreeTierError even with a good key. `x-opencode-request` is not validated but is sent by
-  the official client. `x-opencode-client: cli`.
+  the official client. `x-opencode-client: cli`. Plus `x-opencode-org-id` from the config's
+  `providers.opencode.headers` when present.
 - **Credential.** Workspace API key (opencode.ai/auth → workspace Keys). Invalid key → 401.
 - **Transport split.** `muse-spark-1.3-contributor-free` (and only it today) speaks the
   OpenAI **Responses** API; the rest are chat-completions. pi dispatches to a provider's
   custom `streamSimple` only when `model.api` matches the registered api → one provider per
   transport, sharing one credential store.
-- **Today's free lineup (2026-09-27):** big-pickle, mimo-v2.6-flash-free, mimo-v2.5-free,
-  ling-3.0-flash-fin-free, nemotron-3-ultra-free, nemotron-3.5-lightning-free,
-  muse-spark-1.3-contributor-free.
+- **Today's free lineup (live 2026-09-27, captured from `/api/v2/config`):** big-pickle, mimo-v2.6-flash-free,
+  longcat-2.5-preview-free, space-bunny-free, ling-3.0-flash-fin-free, nemotron-3-ultra-free,
+  nemotron-3.5-lightning-free, muse-spark-1.3-contributor-free. (`mimo-v2.5-free` was delisted since
+  2026-09-22 — the rotation clinefree was built for, already observed.) The config also prescribes
+  `providers.opencode.headers` (e.g. `x-opencode-org-id: wrk_…`) to attach to gateway requests, and a
+  model-level `package` field: `aisdk:@ai-sdk/openai` ⇒ Responses API transport, absent/other ⇒
+  chat-completions.
 
 ## zen-3. Contract layer (replaces cline's GitHub TS extraction)
 
@@ -51,7 +56,7 @@ No source scraping needed — the contract is client-side constants plus one liv
 | Piece | Live source | Baked-in fallback |
 |---|---|---|
 | `x-opencode-client` | constant `cli` | — |
-| `User-Agent` | `opencode/latest/<ver>/cli`, `<ver>` = npm `opencode-ai` dist-tag latest (`https://registry.npmjs.org/opencode-ai/latest` → `version`), semver-guarded ≥ 1.17.0 | `opencode/latest/2.0.11/cli` |
+| `User-Agent` | `opencode/latest/<ver>/cli`, `<ver>` = official update service `https://opencode.ai/update/api/latest/cli` → `artifacts[]` (prefer distribution `npm`) → `version`; semver-guarded ≥ 1.17.0. (npm registry and GitHub releases do **not** carry the 2.x line — verified 2026-09-27.) | `opencode/latest/2.0.18/cli` (live-verified value) |
 | baseUrl | `providers.opencode.settings.baseURL` from `/api/v2/config` | `https://opencode.ai/inference/openai/v1` |
 | session/request ids | minted locally (zen-6) | — |
 
@@ -76,11 +81,11 @@ or unreachable registry → baked-in UA + warning; nothing blocks.
      sent verbatim — matches pi's built-in opencode catalog treatment).
   Cost is always `{ input: 0, output: 0 }` (free). Source recorded as
   `"config" | "modelsdev" | "default"` for status display.
-- **Transport assignment**: default `openai-completions`; a model id matching the baked
-  override set (`muse-spark-*` → `openai-responses`) routes to `zenfree.res`. No feed exposes
-  transport; a future free model on responses without an override lands on `zenfree` and will
-  surface as a provider error (warned in §zen-9 risks, not silently misrouted twice: the
-  error text names the model).
+- **Transport assignment**: `package === "aisdk:@ai-sdk/openai"` ⇒ `openai-responses` (zenfree.res);
+  anything else (absent, `openai-compatible`, anthropic/google — backend routing only) ⇒
+  `openai-completions`. Fallback when `package` is absent: baked prefix override set
+  (`muse-spark-*` → responses). A future free responses model missing both signals lands on
+  `zenfree` and surfaces as a provider error naming the model (§zen-9 risks — warned, not silent).
 
 ## zen-5. Auth (key-required)
 
