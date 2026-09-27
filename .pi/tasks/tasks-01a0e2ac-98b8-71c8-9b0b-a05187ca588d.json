@@ -89,25 +89,25 @@
       "id": "8",
       "subject": "Task 8: auth.ts — API key + OAuth device flow",
       "description": "Credential, formatAuthorization (Bearer, workos: idempotent), isTokenStale (5-min buffer), validateCredential (users/me), refreshClineToken (rotating, single-flight), runDeviceFlow (WorkOS client_01K3A541FN8TA3EPPHTD2325AR → register). Commit feat: auth.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing auth.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790516218088
+      "updatedAt": 1790516335170
     },
     {
       "id": "9",
       "subject": "Task 9: stream.ts — credential-injecting streamSimple",
       "description": "createClinefreeStream: resolve/refresh credential, delegate to getApiProvider(\"openai-completions\"), headers Authorization + contract + X-Task-ID (uuid per conversation, reset new/resume/fork), 401 → mark invalid + notify, no retry. Commit feat: credential-injecting streamSimple.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing stream.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790515624825
+      "updatedAt": 1790516335170
     },
     {
       "id": "10",
