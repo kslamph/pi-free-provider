@@ -101,25 +101,25 @@
       "id": "9",
       "subject": "Task 9: stream.ts — credential-injecting streamSimple",
       "description": "createClinefreeStream: resolve/refresh credential, delegate to getApiProvider(\"openai-completions\"), headers Authorization + contract + X-Task-ID (uuid per conversation, reset new/resume/fork), 401 → mark invalid + notify, no retry. Commit feat: credential-injecting streamSimple.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing stream.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790516335170
+      "updatedAt": 1790516550292
     },
     {
       "id": "10",
       "subject": "Task 10: registry.ts + index.ts — registration, sync, notifications",
       "description": "diffModels + index.ts factory: register clinefree at load (cached, fail-soft), session_start sync (lineup always, capabilities TTL 10, tags TTL 30, contract on tag change), notify +N/−M, delisted-active-model switch prompt, warnings once, no credential → skip + hint. Commit feat: provider registration + sync flow.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing registry + index",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624826,
-      "updatedAt": 1790515624826
+      "updatedAt": 1790516550292
     },
     {
       "id": "11",
