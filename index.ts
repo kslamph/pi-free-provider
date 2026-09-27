@@ -68,6 +68,7 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 
 	if (desired.length === 0) {
 		if (deps.registeredIds.length > 0) {
+			const delistedActive = deps.registeredIds.find((id) => deps.isCurrentModel(id));
 			try {
 				deps.pi.unregisterProvider(PROVIDER_ID);
 			} catch {
@@ -75,6 +76,9 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 			}
 			deps.registeredIds.length = 0;
 			deps.notify("clinefree: free lineup is empty — provider unregistered");
+			if (delistedActive) {
+				deps.notify(`clinefree: active model ${delistedActive} was delisted and the free lineup is now empty — switch models to keep working`);
+			}
 		}
 		return { added, removed };
 	}

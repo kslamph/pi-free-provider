@@ -177,4 +177,31 @@ describe("401 via onResponse", () => {
 		expect(deps.onInvalidated).toHaveBeenCalled();
 		expect(events.map((e) => e.type)).toEqual(["error"]);
 	});
+
+	it("relays a 403 without invalidating the credential (spec §7: invalidation is 401-only)", async () => {
+		const impl = {
+			streamSimple: (_m: unknown, _c: unknown, options: Record<string, unknown> = {}) => {
+				const onResponse = options.onResponse as ((r: { status: number }) => void) | undefined;
+				return (async function* () {
+					onResponse?.({ status: 403 });
+					yield { type: "start" } as AssistantMessageEvent;
+					yield { type: "error", error: { errorMessage: "forbidden: model access denied" } } as never;
+				})();
+			},
+		};
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps = makeDeps({ mode: "oauth", accessToken: "a", refreshToken: "r" });
+		const events = await collect(createClinefreeStream(deps)(model, context));
+		expect(deps.onInvalidated).not.toHaveBeenCalled();
+		expect(deps.notify).not.toHaveBeenCalled();
+		expect(events.map((e) => e.type)).toEqual(["start", "error"]); // provider error relayed as-is
+	});
+
+	it("relays a 'forbidden' error message without a 401 without invalidating", async () => {
+		const impl = fakeImpl([{ type: "error", error: { errorMessage: "403 forbidden for this model" } } as never]);
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps = makeDeps({ mode: "apiKey", apiKey: "sk-x" });
+		await collect(createClinefreeStream(deps)(model, context));
+		expect(deps.onInvalidated).not.toHaveBeenCalled();
+	});
 });

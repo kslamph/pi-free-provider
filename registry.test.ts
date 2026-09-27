@@ -134,6 +134,16 @@ describe("syncOnce", () => {
 		expect(deps.registeredIds).toEqual([]);
 	});
 
+	it("prompts a switch when the active model is delisted along with the whole lineup", async () => {
+		const { pi } = fakePi();
+		const source = fakeSource(LINEUP);
+		const deps = makeDeps(pi, source, { isCurrentModel: (id) => id === "cline-free/mimo-v2.6-flash" });
+		await syncOnce(deps);
+		deps.source = fakeSource([]);
+		await syncOnce(deps);
+		expect(deps.notify).toHaveBeenCalledWith(expect.stringMatching(/switch/i));
+	});
+
 	it("surfaces source warnings once per sync", async () => {
 		const { pi } = fakePi();
 		const source = fakeSource(LINEUP, ["clinefree: models.dev fetch failed (HTTP 503)"]);

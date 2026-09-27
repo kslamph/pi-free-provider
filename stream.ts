@@ -71,8 +71,11 @@ function emitError(out: AssistantMessageEventStream, model: Model<Api>, message:
 	out.end();
 }
 
+/** Spec §7: automatic credential invalidation is 401-only. A 403 usually means
+ * "authenticated but forbidden" (model/region restriction) — evicting a working
+ * credential (and its refresh token) over it would force a needless re-auth. */
 function isUnauthorized(capturedStatus: number, problem: string): boolean {
-	return capturedStatus === 401 || capturedStatus === 403 || /\b(401|403)\b|unauthorized|forbidden/i.test(problem);
+	return capturedStatus === 401 || /\b401\b|unauthorized/i.test(problem);
 }
 
 export function createClinefreeStream(deps: ClinefreeStreamDeps) {
