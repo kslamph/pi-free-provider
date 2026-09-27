@@ -10,6 +10,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext, Api } from "@earendil-works/pi-ai";
+import { runDeviceFlow, validateCredential } from "./auth.ts";
 import { BAKED_IN_CONTRACT, type ContractResult } from "./contract.ts";
 import { DEFAULT_CONFIG, loadConfig, readCache, saveConfig, writeCache, type ClinefreeConfig, type Credential } from "./state.ts";
 import { toProviderModel, type ProviderModel } from "./mapping.ts";
@@ -17,6 +18,7 @@ import { diffModels } from "./registry.ts";
 import { createClinefreeStream, resetConversation } from "./stream.ts";
 import { createClineSource, type ClineSource } from "./sources/cline.ts";
 import type { LineupEntry } from "./sources/types.ts";
+import { maskKey, registerClinefreeCommand } from "./tui.ts";
 
 export const PROVIDER_ID = "clinefree";
 export const PROVIDER_NAME = "Cline Free";
@@ -230,17 +232,65 @@ export default function clinefree(pi: ExtensionAPI): void {
 		}
 	});
 
-	// Refresh entrypoint + shared handles for the /clinefree command (Task 11).
-	runtime.refresh = fullSync;
-	runtime.deps = deps;
-	runtime.notify = notify;
-	runtime.getConfig = () => config;
-}
+	// /clinefree command (status · models · auth · refresh · history).
+	let lastLineup: LineupEntry[] = readCache<LineupEntry[]>("lineup.json") ?? [];
+	const patchLineup = (entries: LineupEntry[]): void => {
+		lastLineup = entries;
+	};
+	const originalFetchLineup = source.fetchLineup.bind(source);
+	source.fetchLineup = async () => {
+		const entries = await originalFetchLineup();
+		patchLineup(entries);
+		return entries;
+	};
 
-/** Handles the factory fills in for the /clinefree command. */
-export const runtime: {
-	refresh?: () => Promise<void>;
-	deps?: SyncDeps;
-	notify?: (message: string) => void;
-	getConfig?: () => ClinefreeConfig;
-} = {};
+	registerClinefreeCommand(pi, {
+		refresh: fullSync,
+		snapshot: () => {
+			const status = source.status();
+			return {
+				tags: status.tags,
+				timestamps: status.timestamps,
+				contractSource: currentContract.source,
+				authMode: config.auth?.mode,
+				apiKeyMasked: config.auth?.apiKey ? maskKey(config.auth.apiKey) : undefined,
+				accountEmail: config.auth?.account?.email,
+				minIntervalMinutes: config.sync.minIntervalMinutes,
+				capabilityTtlMinutes: config.sync.capabilityTtlMinutes,
+			};
+		},
+		modelRows: () =>
+			lastLineup.map((entry) => {
+				const caps = source.resolveCapabilities(entry.id);
+				return { id: entry.id, name: toProviderModel(entry.id, caps, entry.name).name, contextWindow: caps.contextWindow, maxTokens: caps.maxTokens, source: caps.source };
+			}),
+		history: () => readCache<{ lastResult?: { added: string[]; removed: string[]; warnings: string[] } }>("state.json")?.lastResult,
+		setApiKey: async (key: string) => {
+			const cred: Credential = { mode: "apiKey", apiKey: key };
+			const result = await validateCredential(cred, currentContract.headers);
+			if (!result.ok) return { ok: false, detail: `HTTP ${result.status}` };
+			config.auth = { ...cred, account: result.account };
+			saveConfig(config);
+			void fullSync();
+			return { ok: true, detail: result.account.email ?? "accepted" };
+		},
+		deviceFlow: async (onStatus: (message: string) => void) => {
+			try {
+				const cred = await runDeviceFlow(currentContract.headers, { onStatus });
+				const result = await validateCredential(cred, currentContract.headers);
+				if (!result.ok) return { ok: false, detail: `rejected after sign-in (HTTP ${result.status})` };
+				config.auth = { ...cred, account: result.account };
+				saveConfig(config);
+				void fullSync();
+				return { ok: true, detail: result.account.email ?? "signed in" };
+			} catch (error) {
+				return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+			}
+		},
+		clearCredential: () => {
+			config.auth = undefined;
+			saveConfig(config);
+		},
+		notify,
+	});
+}

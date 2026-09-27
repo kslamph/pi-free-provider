@@ -113,25 +113,25 @@
       "id": "10",
       "subject": "Task 10: registry.ts + index.ts — registration, sync, notifications",
       "description": "diffModels + index.ts factory: register clinefree at load (cached, fail-soft), session_start sync (lineup always, capabilities TTL 10, tags TTL 30, contract on tag change), notify +N/−M, delisted-active-model switch prompt, warnings once, no credential → skip + hint. Commit feat: provider registration + sync flow.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing registry + index",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624826,
-      "updatedAt": 1790516550292
+      "updatedAt": 1790516727442
     },
     {
       "id": "11",
       "subject": "Task 11: tui.ts — /clinefree command",
       "description": "registerClinefreeCommand: Status/Models/Auth/Refresh/History menu; tested formatStatus (tags, TTLs, baked-in warning, masked credential, account) and formatModels (id, name, ctx/out, capability source). Commit feat: /clinefree command.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing tui.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624826,
-      "updatedAt": 1790515624826
+      "updatedAt": 1790516727442
     },
     {
       "id": "12",
