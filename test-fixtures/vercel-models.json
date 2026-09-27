@@ -1,0 +1,35 @@
+{
+	"data": [
+		{
+			"id": "stealth/pixel-canary",
+			"object": "model",
+			"created": 1755815280,
+			"released": 1790294400,
+			"owned_by": "stealth",
+			"name": "Pixel Canary",
+			"description": "Pixel Canary is an anonymous large model with strong coding capabilities and adjustable reasoning effort.",
+			"context_window": 262144,
+			"max_tokens": 131072,
+			"type": "language",
+			"tags": ["reasoning", "implicit-caching", "vision"],
+			"supported_specifications": ["v2", "v3", "v4"],
+			"modalities": { "input": ["text", "image"], "output": ["text"] },
+			"supported_parameters": ["max_tokens", "temperature", "stop", "reasoning", "include_reasoning"],
+			"reasoning_options": [{ "type": "effort", "values": ["none", "low", "medium", "xhigh"] }],
+			"pricing": { "input": "0", "output": "0" }
+		},
+		{
+			"id": "deepseek/deepseek-v4.1-flash",
+			"object": "model",
+			"created": 1755715280,
+			"owned_by": "deepseek",
+			"name": "DeepSeek V4.1 Flash",
+			"context_window": 1048576,
+			"max_tokens": 32768,
+			"type": "language",
+			"modalities": { "input": ["text", "image"], "output": ["text"] },
+			"reasoning_options": [{ "type": "effort", "values": ["none", "high", "max"] }],
+			"pricing": { "input": "0", "output": "0" }
+		}
+	]
+}

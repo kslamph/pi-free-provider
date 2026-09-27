@@ -17,37 +17,37 @@
       "id": "2",
       "subject": "Task 2: github.ts — tag resolution + raw fetch",
       "description": "resolveLatestTag (matching-refs, semver sort over lexicographic), fetchRawAtSha, TAG_PREFIXES. Fixture matching-refs-cli.json proving cli-v3.0.65 beats cli-v3.0.7. Commit feat: github tag resolution + raw-at-sha.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing github.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624822,
-      "updatedAt": 1790515716007
+      "updatedAt": 1790515922163
     },
     {
       "id": "3",
       "subject": "Task 3: contract.ts — header extraction + baked-in fallback",
       "description": "extractContract (DEFAULT_CLINE_REQUEST_HEADERS literal extraction, endpoint path from recommended fixture, derived headers from versions) + BAKED_IN_CONTRACT + warning on failure. Fixtures: real upstream request-headers.ts / cline-client-headers.ts / catalog-cline-recommended.ts. Commit feat: contract extraction with baked-in fallback.",
-      "status": "pending",
+      "status": "completed",
       "activeForm": "Implementing contract.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624822,
-      "updatedAt": 1790515624822
+      "updatedAt": 1790515885114
     },
     {
       "id": "4",
       "subject": "Task 4: feeds.ts — models.dev + Vercel clients",
       "description": "FeedEntry, reduceModelsDev (openrouter block: limit.context/output, modalities.input, reasoning_options), reduceVercel (context_window/max_tokens), fetchers with fixed URLs, throw on !ok, {} on malformed. Fixtures with the six real free models incl. deepseek 384000 vs vercel 32768. Commit feat: capability feed clients.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing feeds.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624824,
-      "updatedAt": 1790515624824
+      "updatedAt": 1790515885114
     },
     {
       "id": "5",

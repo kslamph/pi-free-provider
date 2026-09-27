@@ -1,0 +1,86 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { fetchModelsDevOpenRouter, fetchVercelGateway, reduceModelsDev, reduceVercel } from "./feeds.ts";
+
+const dir = join(import.meta.dirname, "test-fixtures");
+const modelsdev = readFileSync(join(dir, "modelsdev.json"), "utf8");
+const vercel = readFileSync(join(dir, "vercel-models.json"), "utf8");
+
+describe("reduceModelsDev", () => {
+	it("reduces the openrouter block keyed by full id, preserving limits and reasoning options", () => {
+		const entries = reduceModelsDev(JSON.parse(modelsdev));
+		expect(Object.keys(entries).sort()).toEqual([
+			"deepseek/deepseek-v4.1-flash",
+			"google/gemini-3.8-flash",
+			"meta/muse-spark-1.3-contributor",
+			"stealth/space-bunny-alpha",
+			"xiaomi/mimo-v2.6-flash",
+		]);
+		expect(entries["deepseek/deepseek-v4.1-flash"]).toEqual({
+			id: "deepseek/deepseek-v4.1-flash",
+			name: "DeepSeek: V4.1 Flash",
+			contextWindow: 1048576,
+			maxTokens: 384000,
+			inputModalities: ["text", "image"],
+			effortValues: ["low", "high", "max"],
+			toggle: true,
+		});
+		expect(entries["stealth/space-bunny-alpha"]?.toggle).toBeUndefined();
+		expect(entries["stealth/space-bunny-alpha"]?.effortValues).toEqual(["low", "medium", "high", "xhigh", "max"]);
+		expect(entries["xiaomi/mimo-v2.6-flash"]?.toggle).toBe(true);
+		expect(entries["xiaomi/mimo-v2.6-flash"]?.effortValues).toBeUndefined();
+	});
+
+	it("returns {} for malformed payloads without throwing", () => {
+		expect(reduceModelsDev({})).toEqual({});
+		expect(reduceModelsDev({ providers: { openrouter: null } })).toEqual({});
+		expect(reduceModelsDev(null)).toEqual({});
+	});
+});
+
+describe("reduceVercel", () => {
+	it("reduces the gateway listing, including the Vercel-only stealth model", () => {
+		const entries = reduceVercel(JSON.parse(vercel));
+		expect(entries["stealth/pixel-canary"]).toEqual({
+			id: "stealth/pixel-canary",
+			name: "Pixel Canary",
+			contextWindow: 262144,
+			maxTokens: 131072,
+			inputModalities: ["text", "image"],
+			effortValues: ["none", "low", "medium", "xhigh"],
+			toggle: undefined,
+		});
+		// Vercel's disagreeing deepseek numbers survive verbatim — precedence is Task 5's job.
+		expect(entries["deepseek/deepseek-v4.1-flash"]?.maxTokens).toBe(32768);
+	});
+
+	it("returns {} for malformed payloads without throwing", () => {
+		expect(reduceVercel({ data: null })).toEqual({});
+		expect(reduceVercel({})).toEqual({});
+		expect(reduceVercel("nope")).toEqual({});
+	});
+});
+
+describe("feed fetchers", () => {
+	it("fetches the fixed URLs and reduces the payload", async () => {
+		const calls: string[] = [];
+		const fetcher: typeof fetch = async (input) => {
+			const url = typeof input === "string" ? input : input.toString();
+			calls.push(url);
+			const body = url.includes("models.dev") ? modelsdev : vercel;
+			return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+		};
+		const openrouter = await fetchModelsDevOpenRouter(fetcher);
+		const vercelGateway = await fetchVercelGateway(fetcher);
+		expect(calls).toEqual(["https://models.dev/api.json", "https://ai-gateway.vercel.sh/v1/models"]);
+		expect(openrouter["deepseek/deepseek-v4.1-flash"]?.maxTokens).toBe(384000);
+		expect(vercelGateway["stealth/pixel-canary"]?.contextWindow).toBe(262144);
+	});
+
+	it("throws with the status on a non-200 response", async () => {
+		const fetcher: typeof fetch = async () => new Response("nope", { status: 503 });
+		await expect(fetchModelsDevOpenRouter(fetcher)).rejects.toThrow(/503/);
+		await expect(fetchVercelGateway(fetcher)).rejects.toThrow(/503/);
+	});
+});
