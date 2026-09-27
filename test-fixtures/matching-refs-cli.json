@@ -1,0 +1,6 @@
+[
+  { "ref": "refs/tags/cli-v3.0.63", "object": { "sha": "d416196ffb84aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "type": "commit" } },
+  { "ref": "refs/tags/cli-v3.0.65", "object": { "sha": "8668e030c11fbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "type": "commit" } },
+  { "ref": "refs/tags/cli-v3.0.7", "object": { "sha": "431a7f3bc1c6cccccccccccccccccccccccccccccc", "type": "commit" } },
+  { "ref": "refs/tags/cli-v3.0.8", "object": { "sha": "c5d61167e5c6ddddddddddddddddddddddddddddddd", "type": "commit" } }
+]

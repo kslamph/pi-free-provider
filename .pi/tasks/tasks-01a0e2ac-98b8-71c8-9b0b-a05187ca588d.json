@@ -5,25 +5,25 @@
       "id": "1",
       "subject": "Task 1: Scaffold + state.ts (config & cache I/O)",
       "description": "package.json/tsconfig/vitest config/.gitignore + state.ts with loadConfig (0600, defaults 30/10/true), saveConfig, cacheDir, readCache/writeCache atomic. Tests in state.test.ts. Commit feat: scaffold + config/cache state.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Scaffolding + state.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624821,
-      "updatedAt": 1790515631419
+      "updatedAt": 1790515716007
     },
     {
       "id": "2",
       "subject": "Task 2: github.ts — tag resolution + raw fetch",
       "description": "resolveLatestTag (matching-refs, semver sort over lexicographic), fetchRawAtSha, TAG_PREFIXES. Fixture matching-refs-cli.json proving cli-v3.0.65 beats cli-v3.0.7. Commit feat: github tag resolution + raw-at-sha.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing github.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624822,
-      "updatedAt": 1790515624822
+      "updatedAt": 1790515716007
     },
     {
       "id": "3",
