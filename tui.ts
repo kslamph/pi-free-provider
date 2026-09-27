@@ -201,9 +201,8 @@ export function registerClinefreeCommand(pi: ExtensionAPI, deps: TuiDeps): void 
 					{ value: "auth", label: "Auth" },
 					{ value: "refresh", label: "Refresh now" },
 					{ value: "history", label: "History" },
-					{ value: "back", label: "Back" },
 				]);
-				if (choice === null || choice === "back") return;
+				if (choice === null) return;
 
 				if (choice === "status") {
 					await infoPanel(ctx, "status", formatStatus(deps.snapshot()));
@@ -245,7 +244,6 @@ export function registerClinefreeCommand(pi: ExtensionAPI, deps: TuiDeps): void 
 						{ value: "apikey", label: "Paste API key" },
 						{ value: "device", label: "Sign in with Cline (device flow)" },
 						{ value: "clear", label: "Clear credential" },
-						{ value: "back", label: "Back" },
 					]);
 					if (authChoice === "apikey") {
 						const key = (await ctx.ui.input("Cline API key", "sk-…"))?.trim();
@@ -290,9 +288,8 @@ export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void
 					{ value: "auth", label: "Auth" },
 					{ value: "refresh", label: "Refresh now" },
 					{ value: "history", label: "History" },
-					{ value: "back", label: "Back" },
 				]);
-				if (choice === null || choice === "back") return;
+				if (choice === null) return;
 
 				if (choice === "status") {
 					await infoPanel(ctx, "status", formatZenStatus(deps.snapshot()));
@@ -333,7 +330,6 @@ export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void
 					const authChoice = await selectOne(ctx, "auth", [
 						{ value: "apikey", label: "Paste workspace key" },
 						{ value: "clear", label: "Clear key" },
-						{ value: "back", label: "Back" },
 					]);
 					if (authChoice === "apikey") {
 						const key = (await ctx.ui.input("OpenCode workspace key", "oc_sk_…"))?.trim();
