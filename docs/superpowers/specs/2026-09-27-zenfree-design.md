@@ -74,14 +74,21 @@ or unreachable registry → baked-in UA + warning; nothing blocks.
 - **Capability precedence** per model id:
   1. **console config entry** (authoritative): `limit.context` → contextWindow,
      `limit.output` → maxTokens, `capabilities.input` ∩ {text,image}, `name`.
-  2. **models.dev `opencode` block** fills any missing limits/modalities/name. Same
-     no-`providers`-wrapper payload shape as the openrouter block. It deliberately does NOT
-     contribute reasoning/toggle/effort: the zen policy is **always-on reasoning with no effort
-     control** (`reasoning: true`, `toggle: false`, all thinking levels null) regardless of what
-     any feed advertises — matching pi's built-in opencode catalog treatment of these models.
+  2. **models.dev `opencode` block** fills any missing limits/modalities/name, and contributes
+     the reasoning shape: `effortValues` (e.g. muse-spark `minimal…xhigh`, space-bunny
+     `low…max`) and/or a `toggle`. Same no-`providers`-wrapper payload shape as the openrouter
+     block. A model with **no advertised reasoning option gets no `thinkingLevelMap` at all**, so
+     pi exposes its generic levels (`off, minimal, low, medium, high`) and forwards them
+     verbatim — matching pi's built-in opencode catalog treatment (big-pickle, mimo, nemotrons).
   3. **zen defaults**: 200K ctx / 32K out / text-only / reasoning **on** (every current free
-     model reasons), no effort control → `thinkingLevelMap: null` (levels hidden, reasoning
-     sent verbatim — matches pi's built-in opencode catalog treatment).
+     model reasons), no toggle/effort list → empty map (generic pi levels).
+  4. **Reasoning wire format** (live-probed 2026-09-28): zen's gateway takes the flat OpenAI
+     `reasoning_effort`, so zen models never set `compat.thinkingFormat="openrouter"` (which
+     Cline's endpoint needs); `toProviderModel` takes a `thinkingFormat: "openai"` override.
+     The gateway **rejects explicit disable values** (`reasoning_effort: "none"` → 400 on
+     big-pickle and muse-spark), so an `off` level must mean *send no parameter*: the empty-map
+     models get that for free, and advertised-toggle models (ling/longcat, which do accept
+     `none`) keep `off → "none"` + `high`. Advertised effort values all pass on both transports.
   Cost is always `{ input: 0, output: 0 }` (free). Source recorded as
   `"opencode" | "modelsdev" | "default"` for status display.
 - **Transport assignment** (live-verified 2026-09-27): `package === "aisdk:@ai-sdk/openai"` ⇒

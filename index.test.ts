@@ -70,7 +70,24 @@ describe("zen bootstrap", () => {
 		expect(registered.map((r) => r.id)).toEqual(["zenfree", "zenfree.res"]);
 		expect((registered[1]!.config as { api: string }).api).toBe("openai-responses");
 		expect((registered[0]!.config as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v1");
-		expect((registered[0]!.config as { models: { id: string; thinkingLevelMap: Record<string, string | null> }[] }).models[0]!.thinkingLevelMap.off).toBeNull();
+		expect((registered[0]!.config as { models: { id: string; thinkingLevelMap: Record<string, string | null> }[] }).models[0]!.thinkingLevelMap).toEqual({});
+	});
+
+	it("zen models carry no OpenRouter thinkingFormat even with effort values (flat reasoning_effort)", () => {
+		const { caps, registered, registerProvider } = zenPieces();
+		const withEffort = { ...caps, effortValues: ["minimal", "low", "medium", "high", "xhigh"] };
+		const targets = buildZenTargets({
+			lineup: [{ id: "muse-spark-1.3-contributor-free", name: "Muse Spark 1.3" }],
+			resolve: () => withEffort,
+			resolveTransport: () => "openai-responses",
+			contract: BAKED_IN_ZEN_CONTRACT,
+			streamSimple: (() => ({})) as never,
+			registerProvider,
+		});
+		targets.forEach((t) => t.register(t.models));
+		const model = (registered[0]!.config as { models: { compat?: unknown; thinkingLevelMap: Record<string, string | null> }[] }).models[0]!;
+		expect(model.compat).toBeUndefined();
+		expect(model.thinkingLevelMap.minimal).toBe("minimal");
 	});
 
 	it("yields no targets for an empty lineup", () => {

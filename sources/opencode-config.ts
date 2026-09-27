@@ -34,13 +34,14 @@ export interface ZenConsoleConfig {
 	models: Record<string, ZenModelEntry>;
 }
 
-/** Zen defaults (spec §zen-4): every current free model reasons, none exposes effort control. */
+/** Zen defaults (spec §zen-4): every current free model reasons. A model with no
+ *  advertised reasoning option gets no thinkingLevelMap — pi offers its generic
+ *  levels and forwards them verbatim (pi built-in catalog parity). */
 export const ZEN_DEFAULTS = {
 	contextWindow: 200_000,
 	maxTokens: 32_000,
 	input: ["text"] as ("text" | "image")[],
 	reasoning: true,
-	/** Zen free models reason always-on with no effort toggle. */
 	toggle: false,
 } as const;
 
@@ -136,6 +137,8 @@ export interface ZenCapabilities {
 	maxTokens: number;
 	input: ("text" | "image")[];
 	reasoning: boolean;
+	/** Reasoner effort values advertised by models.dev, when any. */
+	effortValues?: string[];
 	toggle: boolean;
 	name?: string;
 	/** Where the limits came from: opencode's console config, models.dev, or built-in defaults. */
@@ -150,12 +153,17 @@ export interface ZenCapabilities {
 export function mergeZenCapabilities(config: ZenModelEntry | undefined, dev: FeedEntry | undefined): ZenCapabilities {
 	const source: ZenCapabilities["source"] =
 		config?.limit?.context !== undefined ? "opencode" : dev?.contextWindow !== undefined ? "modelsdev" : "default";
+	// Reasoning options come from models.dev (the console config never carries them).
+	// No advertised options ⇒ no toggle/effort list, so pi exposes its generic levels.
+	const effortValues = (dev?.effortValues?.length ?? 0) > 0 ? dev?.effortValues : undefined;
+	const toggle = dev?.toggle === true;
 	const merged: ZenCapabilities = {
 		contextWindow: config?.limit?.context ?? dev?.contextWindow ?? ZEN_DEFAULTS.contextWindow,
 		maxTokens: config?.limit?.output ?? dev?.maxTokens ?? ZEN_DEFAULTS.maxTokens,
 		input: piInput(config?.input) ?? piInput(dev?.inputModalities) ?? ZEN_DEFAULTS.input,
 		reasoning: ZEN_DEFAULTS.reasoning,
-		toggle: false,
+		toggle,
+		...(effortValues !== undefined ? { effortValues } : {}),
 		...( (config?.name ?? dev?.name) !== undefined ? { name: config?.name ?? dev?.name } : {}),
 		source,
 	};

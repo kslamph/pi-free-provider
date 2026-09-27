@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { FeedEntry } from "../feeds.ts";
+import { toProviderModel } from "../mapping.ts";
 import {
 	CONSOLE_CONFIG_URL,
 	ZEN_DEFAULTS,
@@ -146,11 +148,42 @@ describe("mergeZenCapabilities", () => {
 
 	});
 
-	it("zen policy: dev effort options are ignored — reasoning always on, no toggle", () => {
-		const devWithEffort = devEntry({ effortValues: ["minimal", "low", "medium", "high", "xhigh"], toggle: true });
+	it("adopts models.dev effort values (no toggle): muse-spark exposes minimal…xhigh", () => {
+		const devWithEffort = devEntry({ effortValues: ["minimal", "low", "medium", "high", "xhigh"] });
 		const merged = mergeZenCapabilities(undefined, devWithEffort);
 		expect(merged.reasoning).toBe(true);
 		expect(merged.toggle).toBe(false);
+		expect(merged.effortValues).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
+	});
+
+	it("adopts a models.dev toggle: ling/longcat expose off + high", () => {
+		const merged = mergeZenCapabilities(undefined, devEntry({ toggle: true }));
+		expect(merged.toggle).toBe(true);
+		expect(merged.effortValues).toBeUndefined();
+	});
+
+	it("no advertised options ⇒ no toggle and no effort list (pi supplies the generic levels)", () => {
+		for (const merged of [
+			mergeZenCapabilities(configEntry(), undefined),
+			mergeZenCapabilities(undefined, devEntry({ toggle: undefined, effortValues: undefined })),
+			mergeZenCapabilities(undefined, undefined),
+		]) {
+			expect(merged.toggle).toBe(false);
+			expect(merged.effortValues).toBeUndefined();
+		}
+	});
+
+	it("an advertised toggle keeps off + high (ling/longcat accept the disable value)", () => {
+		const model = toProviderModel("ling-3.0-flash-fin-free", mergeZenCapabilities(undefined, devEntry({ toggle: true })), undefined, { thinkingFormat: "openai" });
+		expect(getSupportedThinkingLevels(model as never)).toEqual(["off", "high"]);
+	});
+
+	it("regression: zen models expose pi thinking levels instead of an all-null map", () => {
+		const noOptions = toProviderModel("big-pickle", mergeZenCapabilities(configEntry(), undefined), undefined, { thinkingFormat: "openai" });
+		expect(noOptions.thinkingLevelMap).toEqual({});
+		expect(getSupportedThinkingLevels(noOptions as never)).toEqual(["off", "minimal", "low", "medium", "high"]);
+		const effort = toProviderModel("muse-spark-1.3-contributor-free", mergeZenCapabilities(undefined, devEntry({ effortValues: ["minimal", "low", "medium", "high", "xhigh"] })), undefined, { thinkingFormat: "openai" });
+		expect(getSupportedThinkingLevels(effort as never)).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
 	});
 
 	it("non text/image modalities are dropped; empty falls back to text", () => {

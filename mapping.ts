@@ -11,7 +11,8 @@
  *    as an effort value.
  *  - Every advertised effort value maps 1:1 to the same-named pi level.
  *  - A toggle-only model exposes off + high.
- *  - compat.thinkingFormat is "openrouter" iff effort values exist.
+ *  - compat.thinkingFormat is "openrouter" iff effort values exist and the
+ *    caller did not override the wire format (zen uses flat reasoning_effort).
  */
 
 import type { ModelCapabilities } from "./capabilities.ts";
@@ -38,6 +39,11 @@ export interface ProviderModel {
 /** Build the full thinkingLevelMap (every level present, null = unsupported). */
 export function buildThinkingLevelMap(caps: ModelCapabilities): Record<string, string | null> {
 	const advertised = new Set(caps.effortValues ?? []);
+	// Reasoning with no advertised control (no effort list, no toggle): leave the map
+	// empty so pi offers its generic levels and forwards them verbatim. This matches
+	// pi's built-in catalog (e.g. opencode big-pickle) and avoids inventing a disable
+	// value the gateway may reject.
+	if (caps.reasoning && !caps.toggle && advertised.size === 0) return {};
 	const supportsOff = caps.toggle || advertised.has("none");
 	const map: Record<string, string | null> = {};
 	for (const level of LEVELS) {
@@ -66,8 +72,16 @@ export function toProviderModel(
 	id: string,
 	caps: ModelCapabilities,
 	feedName?: string,
-	over?: { api?: ProviderModel["api"]; baseUrl?: string },
+	over?: {
+		api?: ProviderModel["api"];
+		baseUrl?: string;
+		/** Reasoning wire format. Default "openrouter" (Cline's nested
+		 *  `reasoning.effort`); zen's gateway takes the flat OpenAI
+		 *  `reasoning_effort`, so it passes "openai" (no compat flag). */
+		thinkingFormat?: "openrouter" | "openai";
+	},
 ): ProviderModel {
+	const thinkingFormat = over?.thinkingFormat ?? "openrouter";
 	return {
 		id,
 		name: displayName(id, caps, feedName),
@@ -79,6 +93,6 @@ export function toProviderModel(
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: caps.contextWindow,
 		maxTokens: caps.maxTokens,
-		...((caps.effortValues?.length ?? 0) > 0 ? { compat: { thinkingFormat: "openrouter" } } : {}),
+		...((thinkingFormat === "openrouter" && (caps.effortValues?.length ?? 0) > 0) ? { compat: { thinkingFormat: "openrouter" } } : {}),
 	};
 }

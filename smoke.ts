@@ -30,6 +30,11 @@ function report(name: string, ok: boolean, detail: string): void {
 	if (!ok) failures++;
 	console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 }
+/** Upstream outage (not a client error): the reasoning value wasn't exercised, so
+ *  a wire-format probe should skip rather than fail. 400 invalid_request stays a failure. */
+function isUpstreamUnavailable(status: number, text: string): boolean {
+	return status >= 500 || /Endpoint is unavailable|"type":"server_error"/i.test(text);
+}
 
 const source = createClineSource();
 
@@ -202,6 +207,103 @@ if (zenKey) {
 			report(`zen responses probe (${responsesModel})`, ok, `HTTP ${response.status} · ${text.slice(0, 80).replace(/\n/g, " ")}`);
 		} catch (error) {
 			report(`zen responses probe (${responsesModel})`, false, error instanceof Error ? error.message : String(error));
+		}
+	}
+	// z7. Reasoning wire-format probes: the gateway must accept every value our
+	//     zen thinkingLevelMap can emit — generic levels forwarded verbatim (empty
+	//     map), an advertised toggle's none/high, advertised effort values, and
+	//     the nested `reasoning.effort` for the Responses transport. Off for an
+	//     empty map sends no parameter, which z5 already exercises.
+	if (completionsModel) {
+		const chatTools = ["read", "shell", "edit", "write"].map((name) => ({
+			type: "function",
+			function: { name, description: name, parameters: { type: "object", properties: {} } },
+		}));
+		const findCompletions = (predicate: (c: ReturnType<typeof zenSource.resolveCapabilities>) => boolean) =>
+			zenLineup.find((e) => zenSource.resolveTransport(e.id) === "openai-completions" && predicate(zenSource.resolveCapabilities(e.id)))?.id;
+		const effortModel = findCompletions((c) => (c.effortValues?.length ?? 0) > 0);
+		const toggleModel = findCompletions((c) => c.toggle);
+		const genericModel = findCompletions((c) => c.reasoning && !c.toggle && (c.effortValues?.length ?? 0) === 0);
+		const reasoningHeaders = {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${zenKey}`,
+			...zenContract.headers,
+			...zenSource.configHeaders(),
+		};
+		const chatProbes: { label: string; id: string; effort: string }[] = [];
+		if (genericModel) chatProbes.push({ label: `${genericModel} reasoning_effort=minimal`, id: genericModel, effort: "minimal" });
+		if (toggleModel) {
+			chatProbes.push({ label: `${toggleModel} reasoning_effort=none (off)`, id: toggleModel, effort: "none" });
+			chatProbes.push({ label: `${toggleModel} reasoning_effort=high`, id: toggleModel, effort: "high" });
+		}
+		if (effortModel) {
+			const top = zenSource.resolveCapabilities(effortModel).effortValues?.at(-1) ?? "high";
+			chatProbes.push({ label: `${effortModel} reasoning_effort=${top}`, id: effortModel, effort: top });
+		}
+		for (const probe of chatProbes) {
+			try {
+				const response = await fetch(`${zenSource.configBaseUrl()}/chat/completions`, {
+					method: "POST",
+					headers: { ...reasoningHeaders, "x-opencode-session": createSessionId(), "x-opencode-request": createMessageId() },
+					body: JSON.stringify({
+						model: probe.id,
+						messages: [{ role: "user", content: "reply with the single word: pong" }],
+						stream: true,
+						max_tokens: 256,
+						reasoning_effort: probe.effort,
+						tools: chatTools,
+					}),
+					signal: AbortSignal.timeout(60_000),
+				});
+				const text = await response.text();
+				const down = isUpstreamUnavailable(response.status, text);
+				report(
+					`zen reasoning chat (${probe.label})`,
+					(response.ok && text.includes("data:")) || down,
+					down ? `HTTP ${response.status} · upstream unavailable — value not exercised (skipped)` : `HTTP ${response.status} · ${text.slice(0, 70).replace(/\n/g, " ")}`,
+				);
+			} catch (error) {
+				report(`zen reasoning chat (${probe.label})`, false, error instanceof Error ? error.message : String(error));
+			}
+		}
+	}
+	if (responsesModel) {
+		const responsesEffort = zenSource.resolveCapabilities(responsesModel).effortValues?.[0] ?? "high";
+		try {
+			const response = await fetch(`${zenSource.configBaseUrl()}/responses`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${zenKey}`,
+					...zenContract.headers,
+					...zenSource.configHeaders(),
+					"x-opencode-session": createSessionId(),
+					"x-opencode-request": createMessageId(),
+				},
+				body: JSON.stringify({
+					model: responsesModel,
+					input: "reply with the single word: pong",
+					stream: true,
+					reasoning: { effort: responsesEffort, summary: "auto" },
+					include: ["reasoning.encrypted_content"],
+					tools: ["read", "shell", "edit", "write"].map((name) => ({
+						type: "function",
+						name,
+						description: name,
+						parameters: { type: "object", properties: {} },
+					})),
+				}),
+				signal: AbortSignal.timeout(60_000),
+			});
+			const text = await response.text();
+			const down = isUpstreamUnavailable(response.status, text);
+			report(
+				`zen reasoning responses (${responsesModel} reasoning.effort=${responsesEffort})`,
+				(response.ok && text.includes("response.created")) || down,
+				down ? `HTTP ${response.status} · upstream unavailable — value not exercised (skipped)` : `HTTP ${response.status} · ${text.slice(0, 70).replace(/\n/g, " ")}`,
+			);
+		} catch (error) {
+			report(`zen reasoning responses (${responsesModel})`, false, error instanceof Error ? error.message : String(error));
 		}
 	}
 }

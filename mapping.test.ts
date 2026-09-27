@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { LEVELS, toProviderModel, type ProviderModel } from "./mapping.ts";
 import type { ModelCapabilities } from "./capabilities.ts";
 
@@ -79,6 +80,12 @@ describe("toProviderModel", () => {
 		expect(Object.values(model.thinkingLevelMap).every((v) => v === null)).toBe(true);
 	});
 
+	it("reasoning with no advertised control or toggle → empty map, pi's generic levels (built-in parity)", () => {
+		const model = toProviderModel("big-pickle", caps({ reasoning: true, toggle: false, effortValues: undefined, source: "opencode" }));
+		expect(model.thinkingLevelMap).toEqual({});
+		expect(getSupportedThinkingLevels(model as never)).toEqual(["off", "minimal", "low", "medium", "high"]);
+	});
+
 	it("compat.thinkingFormat=openrouter iff effort values exist", () => {
 		const withEffort = toProviderModel("a", caps({ effortValues: ["low"] }));
 		const toggleOnly = toProviderModel("b", caps({ toggle: true }));
@@ -128,5 +135,14 @@ describe("toProviderModel overrides", () => {
 		expect(model.api).toBe("openai-responses");
 		expect(model.baseUrl).toBe("https://opencode.ai/inference/openai/v1");
 		expect(model.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+	});
+
+	it("thinkingFormat=openai drops the OpenRouter compat flag but keeps the effort map (zen gateway)", () => {
+		const active = caps({ effortValues: ["minimal", "low", "medium", "high", "xhigh"] });
+		const zen = toProviderModel("muse-spark-1.3-contributor-free", active, undefined, { thinkingFormat: "openai" });
+		expect(zen.compat).toBeUndefined();
+		expect(zen.thinkingLevelMap).toMatchObject({ off: null, minimal: "minimal", low: "low", high: "high", xhigh: "xhigh" });
+		const cline = toProviderModel("cline-free/x", active, undefined, {});
+		expect(cline.compat).toEqual({ thinkingFormat: "openrouter" });
 	});
 });

@@ -170,7 +170,7 @@ export function buildZenTargets(opts: ZenTargetOpts): DesiredProvider[] {
 	for (const entry of opts.lineup) {
 		const api = opts.resolveTransport(entry.id);
 		const caps = opts.resolve(entry.id);
-		const model = toProviderModel(entry.id, caps, entry.name, { api, baseUrl: opts.contract.baseUrl });
+		const model = toProviderModel(entry.id, caps, entry.name, { api, baseUrl: opts.contract.baseUrl, thinkingFormat: "openai" });
 		const providerId = api === "openai-responses" ? ZEN_RES_PROVIDER_ID : ZEN_PROVIDER_ID;
 		const group = groups.get(providerId) ?? { providerId, api, models: [] };
 		group.models.push(model);
