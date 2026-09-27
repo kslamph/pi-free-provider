@@ -1,0 +1,25 @@
+{
+	"name": "pi-oc-cline",
+	"version": "0.1.0",
+	"description": "pi extension exposing Cline's free models as one auto-synced provider (clinefree)",
+	"keywords": ["pi-package", "pi", "pi-extension", "cline", "free-models", "provider"],
+	"license": "MIT",
+	"type": "module",
+	"engines": { "node": ">=22" },
+	"files": ["index.ts", "sources", "github.ts", "contract.ts", "feeds.ts", "capabilities.ts", "mapping.ts", "registry.ts", "auth.ts", "state.ts", "stream.ts", "tui.ts", "README.md", "LICENSE"],
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	},
+	"devDependencies": {
+		"@types/node": "^25.0.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	},
+	"scripts": {
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit"
+	},
+	"pi": { "extensions": ["./index.ts"] }
+}

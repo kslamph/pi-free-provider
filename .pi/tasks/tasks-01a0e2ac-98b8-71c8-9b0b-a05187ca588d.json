@@ -1,0 +1,149 @@
+{
+  "nextId": 13,
+  "tasks": [
+    {
+      "id": "1",
+      "subject": "Task 1: Scaffold + state.ts (config & cache I/O)",
+      "description": "package.json/tsconfig/vitest config/.gitignore + state.ts with loadConfig (0600, defaults 30/10/true), saveConfig, cacheDir, readCache/writeCache atomic. Tests in state.test.ts. Commit feat: scaffold + config/cache state.",
+      "status": "in_progress",
+      "activeForm": "Scaffolding + state.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624821,
+      "updatedAt": 1790515631419
+    },
+    {
+      "id": "2",
+      "subject": "Task 2: github.ts — tag resolution + raw fetch",
+      "description": "resolveLatestTag (matching-refs, semver sort over lexicographic), fetchRawAtSha, TAG_PREFIXES. Fixture matching-refs-cli.json proving cli-v3.0.65 beats cli-v3.0.7. Commit feat: github tag resolution + raw-at-sha.",
+      "status": "pending",
+      "activeForm": "Implementing github.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624822,
+      "updatedAt": 1790515624822
+    },
+    {
+      "id": "3",
+      "subject": "Task 3: contract.ts — header extraction + baked-in fallback",
+      "description": "extractContract (DEFAULT_CLINE_REQUEST_HEADERS literal extraction, endpoint path from recommended fixture, derived headers from versions) + BAKED_IN_CONTRACT + warning on failure. Fixtures: real upstream request-headers.ts / cline-client-headers.ts / catalog-cline-recommended.ts. Commit feat: contract extraction with baked-in fallback.",
+      "status": "pending",
+      "activeForm": "Implementing contract.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624822,
+      "updatedAt": 1790515624822
+    },
+    {
+      "id": "4",
+      "subject": "Task 4: feeds.ts — models.dev + Vercel clients",
+      "description": "FeedEntry, reduceModelsDev (openrouter block: limit.context/output, modalities.input, reasoning_options), reduceVercel (context_window/max_tokens), fetchers with fixed URLs, throw on !ok, {} on malformed. Fixtures with the six real free models incl. deepseek 384000 vs vercel 32768. Commit feat: capability feed clients.",
+      "status": "pending",
+      "activeForm": "Implementing feeds.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624824,
+      "updatedAt": 1790515624824
+    },
+    {
+      "id": "5",
+      "subject": "Task 5: capabilities.ts — precedence resolution",
+      "description": "ModelCapabilities, DEFAULT_CAPABILITIES (256000/32000/[text]/false), resolveCapabilities openrouter exact→slug then vercel exact→slug then defaults; modalities ∩ {text,image}. Tests pin deepseek 384000, pixel-canary 262144 vercel, space-bunny openrouter, unknown→defaults, gemini slug rule. Commit feat: capability precedence.",
+      "status": "pending",
+      "activeForm": "Implementing capabilities.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624824,
+      "updatedAt": 1790515624824
+    },
+    {
+      "id": "6",
+      "subject": "Task 6: mapping.ts — capabilities → pi model",
+      "description": "LEVELS, ProviderModel, toProviderModel: thinkingLevelMap (off←none/toggle; 1:1 advertised; null otherwise), compat thinkingFormat openrouter iff effort, zero cost, name rule. Tests for deepseek/pixel-canary/mimo/gemini maps. Commit feat: capabilities→pi model mapping.",
+      "status": "pending",
+      "activeForm": "Implementing mapping.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624825,
+      "updatedAt": 1790515624825
+    },
+    {
+      "id": "7",
+      "subject": "Task 7: sources/ — FreeModelSource (cline)",
+      "description": "sources/types.ts + sources/cline.ts createClineSource: fetchLineup (contract headers, free only, cache fallback), refreshContract (3 tags, contract files, skip on unchanged, baked-in fallback), refreshCapabilities (10-min TTL, cache reuse), resolveCapabilities; state.json tags/shas/timestamps. Fixture recommended-models.json. Commit feat: cline FreeModelSource.",
+      "status": "pending",
+      "activeForm": "Implementing sources/cline.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624825,
+      "updatedAt": 1790515624825
+    },
+    {
+      "id": "8",
+      "subject": "Task 8: auth.ts — API key + OAuth device flow",
+      "description": "Credential, formatAuthorization (Bearer, workos: idempotent), isTokenStale (5-min buffer), validateCredential (users/me), refreshClineToken (rotating, single-flight), runDeviceFlow (WorkOS client_01K3A541FN8TA3EPPHTD2325AR → register). Commit feat: auth.",
+      "status": "pending",
+      "activeForm": "Implementing auth.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624825,
+      "updatedAt": 1790515624825
+    },
+    {
+      "id": "9",
+      "subject": "Task 9: stream.ts — credential-injecting streamSimple",
+      "description": "createClinefreeStream: resolve/refresh credential, delegate to getApiProvider(\"openai-completions\"), headers Authorization + contract + X-Task-ID (uuid per conversation, reset new/resume/fork), 401 → mark invalid + notify, no retry. Commit feat: credential-injecting streamSimple.",
+      "status": "pending",
+      "activeForm": "Implementing stream.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624825,
+      "updatedAt": 1790515624825
+    },
+    {
+      "id": "10",
+      "subject": "Task 10: registry.ts + index.ts — registration, sync, notifications",
+      "description": "diffModels + index.ts factory: register clinefree at load (cached, fail-soft), session_start sync (lineup always, capabilities TTL 10, tags TTL 30, contract on tag change), notify +N/−M, delisted-active-model switch prompt, warnings once, no credential → skip + hint. Commit feat: provider registration + sync flow.",
+      "status": "pending",
+      "activeForm": "Implementing registry + index",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624826,
+      "updatedAt": 1790515624826
+    },
+    {
+      "id": "11",
+      "subject": "Task 11: tui.ts — /clinefree command",
+      "description": "registerClinefreeCommand: Status/Models/Auth/Refresh/History menu; tested formatStatus (tags, TTLs, baked-in warning, masked credential, account) and formatModels (id, name, ctx/out, capability source). Commit feat: /clinefree command.",
+      "status": "pending",
+      "activeForm": "Implementing tui.ts",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624826,
+      "updatedAt": 1790515624826
+    },
+    {
+      "id": "12",
+      "subject": "Task 12: smoke.ts + README + final verification",
+      "description": "smoke.ts (CLINEFREE_SMOKE_KEY: users/me → lineup → feeds → capabilities table → 1-token chat; refuses without env), README, full typecheck+tests, import test. Commit feat: live smoke + readme. Then run smoke with dev key manually.",
+      "status": "pending",
+      "activeForm": "Writing smoke + README",
+      "metadata": {},
+      "blocks": [],
+      "blockedBy": [],
+      "createdAt": 1790515624826,
+      "updatedAt": 1790515624826
+    }
+  ]
+}
