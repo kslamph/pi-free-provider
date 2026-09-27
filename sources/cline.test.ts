@@ -177,9 +177,18 @@ describe("refreshContract", () => {
 });
 
 describe("refreshCapabilities + resolveCapabilities", () => {
+	const IDS = [
+		"stealth/pixel-canary",
+		"stealth/space-bunny-alpha",
+		"cline-free/mimo-v2.6-flash",
+		"cline-free/deepseek-v4.1-flash",
+		"cline-free/gemini-3.8-flash",
+		"cline-free/muse-spark-1.3-contributor",
+	];
+
 	it("caches both feeds and resolves pixel-canary through the vercel fallback", async () => {
 		const source = makeSource();
-		const feeds = await source.refreshCapabilities();
+		const feeds = await source.refreshCapabilities(IDS);
 		expect(Object.keys(feeds.openrouter)).toContain("deepseek/deepseek-v4.1-flash");
 		expect(Object.keys(feeds.vercel)).toContain("stealth/pixel-canary");
 		const caps = source.resolveCapabilities("stealth/pixel-canary");
@@ -191,21 +200,45 @@ describe("refreshCapabilities + resolveCapabilities", () => {
 
 	it("reuses the cache when the feeds are unreachable (last-known-good)", async () => {
 		const source = makeSource();
-		await source.refreshCapabilities();
+		await source.refreshCapabilities(IDS);
 		failUrls.add("https://models.dev/api.json");
 		failUrls.add("https://ai-gateway.vercel.sh/v1/models");
-		clockMs += 20 * 60_000; // past the 10-minute TTL
-		const feeds = await source.refreshCapabilities();
+		clockMs += 20 * 60_000;
+		// force bypasses id-coverage gating so the (failing) fetch is retried
+		const feeds = await source.refreshCapabilities(IDS, true);
 		expect(feeds.openrouter["deepseek/deepseek-v4.1-flash"]?.maxTokens).toBe(384000);
 		expect(feeds.vercel["stealth/pixel-canary"]?.contextWindow).toBe(262144);
 	});
 
-	it("skips fetching inside the capability TTL", async () => {
+	it("skips fetching once every requested id is covered, without force", async () => {
 		const source = makeSource();
-		await source.refreshCapabilities();
+		await source.refreshCapabilities(IDS);
 		const before = calls.length;
-		clockMs += 5 * 60_000; // inside 10-minute TTL
-		await source.refreshCapabilities();
+		await source.refreshCapabilities(IDS);
 		expect(calls.length).toBe(before);
+	});
+
+	it("fetches when a new id in the lineup was never covered before", async () => {
+		const source = makeSource();
+		await source.refreshCapabilities(["stealth/pixel-canary"]);
+		const before = calls.length;
+		await source.refreshCapabilities(["stealth/pixel-canary", "brand/new-thing"]);
+		expect(calls.length).toBeGreaterThan(before);
+	});
+
+	it("force re-fetches even when every id is already covered", async () => {
+		const source = makeSource();
+		await source.refreshCapabilities(IDS);
+		const before = calls.length;
+		await source.refreshCapabilities(IDS, true);
+		expect(calls.length).toBeGreaterThan(before);
+	});
+
+	it("records covered ids in the cache and via status()", async () => {
+		const source = makeSource();
+		await source.refreshCapabilities(["stealth/pixel-canary", "brand/new-thing"]);
+		const cached = cache["capabilities.json"] as { coveredIds: string[] };
+		expect(cached.coveredIds).toEqual(expect.arrayContaining(["stealth/pixel-canary", "brand/new-thing"]));
+		expect(source.status().capabilitiesCoveredIds).toEqual(expect.arrayContaining(["stealth/pixel-canary", "brand/new-thing"]));
 	});
 });

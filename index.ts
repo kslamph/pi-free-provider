@@ -52,8 +52,8 @@ export interface SyncDeps {
  * before, unless `forceCapabilities`) → map → diff → re-register.
  * Never throws: a failing source keeps the previous registration.
  */
-export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; removed: string[] }> {
-	if (!deps.config.auth) return { added: [], removed: [] };
+export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; removed: string[]; warnings: string[] }> {
+	if (!deps.config.auth) return { added: [], removed: [], warnings: [] };
 
 	let lineup: LineupEntry[];
 	try {
@@ -61,8 +61,23 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
 		deps.notify(`clinefree: sync failed (${reason}) — keeping previous models`);
-		return { added: [], removed: [] };
+		return { added: [], removed: [], warnings: [] };
 	}
+
+	const desiredIds = lineup.map((entry) => entry.id);
+	if (desiredIds.length > 0) {
+		try {
+			await deps.source.refreshCapabilities(desiredIds, deps.forceCapabilities ?? false);
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			deps.notify(`clinefree: capability fetch failed (${reason}) — using cached/default capabilities`);
+		}
+	}
+
+	// Surface collected warnings once per sync, then clear them.
+	const warnings = [...deps.source.warnings];
+	for (const warning of warnings) deps.notify(warning);
+	deps.source.warnings.length = 0;
 
 	const models: ProviderModel[] = lineup.map((entry) =>
 		toProviderModel(entry.id, deps.source.resolveCapabilities(entry.id), entry.name),
@@ -77,8 +92,11 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 		isCurrentModel: deps.isCurrentModel,
 		registered: { providerIds, modelIds: deps.registeredIds },
 	};
-	if (models.length === 0) return syncProviders(engine, []);
-	return syncProviders(engine, [
+	if (models.length === 0) {
+		const result = syncProviders(engine, []);
+		return { ...result, warnings };
+	}
+	const result = syncProviders(engine, [
 		{
 			providerId: PROVIDER_ID,
 			models,
@@ -96,6 +114,7 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 			},
 		},
 	]);
+	return { ...result, warnings };
 }
 
 /** Record the sync result into the cache's state.json (history for /clinefree). */
@@ -119,7 +138,6 @@ export default function clinefree(pi: ExtensionAPI): void {
 
 	const source = createClineSource({
 		minIntervalMs: config.sync.minIntervalMinutes * 60_000,
-		capabilityTtlMs: config.sync.capabilityTtlMinutes * 60_000,
 	});
 	let currentContract: ContractResult = readCache<ContractResult>("contract.json") ?? BAKED_IN_CONTRACT;
 
@@ -176,9 +194,8 @@ export default function clinefree(pi: ExtensionAPI): void {
 	/** Full sync: contract (TTL-gated) → lineup+capabilities+register. `force` bypasses the tag-interval and re-fetches capabilities even for already-covered ids. */
 	const fullSync = async (force = false): Promise<void> => {
 		currentContract = await source.refreshContract(force);
-		const before = [...source.warnings];
 		const result = await syncOnce({ ...deps, forceCapabilities: force });
-		recordSyncResult(result.added, result.removed, before);
+		recordSyncResult(result.added, result.removed, result.warnings);
 	};
 
 	// Register from cached state up front so models exist during startup (no network).

@@ -4,8 +4,9 @@
  *    min interval; baked-in fallback with a warning when unreachable.
  *  - lineup: live recommended-models `free[]` (unauthenticated), contract
  *    headers attached; last-known-good cache on failure.
- *  - capabilities: models.dev openrouter + Vercel AI Gateway feeds, TTL-gated
- *    (default 10 minutes, mirroring Cline's own catalog TTL).
+ *  - capabilities: models.dev openrouter + Vercel AI Gateway feeds, fetched
+ *    once per model id — an id already covered by a prior successful fetch
+ *    is never re-fetched automatically, only on a manual `force` refresh.
  *
  * Every network path is fail-soft: nothing here throws outward.
  */
@@ -19,7 +20,6 @@ import type { FreeModelSource, LineupEntry } from "./types.ts";
 
 const CLINE_API_BASE = "https://api.cline.bot";
 const DEFAULT_MIN_INTERVAL_MS = 30 * 60_000;
-const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000;
 
 const CONTRACT_FILES = {
 	requestHeaders: "sdk/packages/llms/src/providers/request-headers.ts",
@@ -41,7 +41,6 @@ export interface ClineSourceDeps {
 	readCache?: <T>(name: string) => T | undefined;
 	writeCache?: (name: string, data: unknown) => void;
 	minIntervalMs?: number;
-	capabilityTtlMs?: number;
 }
 
 export interface ClineSource extends FreeModelSource {
@@ -52,6 +51,8 @@ export interface ClineSource extends FreeModelSource {
 		tags: SyncState["tags"];
 		timestamps: SyncState["timestamps"];
 		contractSource: "github" | "baked-in" | "none";
+		/** Ids already covered by a successful capability fetch (survives restarts). */
+		capabilitiesCoveredIds: string[];
 	};
 }
 
@@ -61,6 +62,8 @@ interface CachedCapabilities {
 	openrouter: Record<string, FeedEntry>;
 	vercel: Record<string, FeedEntry>;
 	updatedAt: number;
+	/** Ids already covered by a successful (or confirmed-absent) capability fetch. */
+	coveredIds: string[];
 }
 
 /** `cli-v3.0.65` → `3.0.65`; `sdk/llms/v0.0.86` → `0.0.86`. */
@@ -75,7 +78,6 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 	const readCache = deps.readCache ?? defaultReadCache;
 	const writeCache = deps.writeCache ?? defaultWriteCache;
 	const minIntervalMs = deps.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
-	const capabilityTtlMs = deps.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS;
 
 	const warnings: string[] = [];
 	let feeds: { openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> } | undefined;
@@ -160,20 +162,47 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 		}
 	}
 
-	async function refreshCapabilities(): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }> {
+	/**
+	 * Fetch the capability feeds only when `force`, or when `ids` contains at
+	 * least one id never covered by a prior fetch. "Covered" means either the
+	 * id resolved to real data, or both feeds were fetched successfully and
+	 * confirmed the id absent from both — either way there is nothing more to
+	 * learn about it without a manual refresh.
+	 */
+	async function refreshCapabilities(ids: string[], force = false): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }> {
 		const cached = readCache<CachedCapabilities>("capabilities.json");
-		if (feeds && cached && now() - cached.updatedAt < capabilityTtlMs) return feeds;
+		const coveredIds = new Set(cached?.coveredIds ?? []);
+		const hasUncovered = ids.some((id) => !coveredIds.has(id));
+		if (!force && !hasUncovered) {
+			if (feeds) return feeds;
+			if (cached) {
+				feeds = { openrouter: cached.openrouter, vercel: cached.vercel };
+				return feeds;
+			}
+			return { openrouter: {}, vercel: {} };
+		}
 
-		const current: CachedCapabilities = cached ?? { openrouter: {}, vercel: {}, updatedAt: 0 };
+		const current: CachedCapabilities = cached ?? { openrouter: {}, vercel: {}, updatedAt: 0, coveredIds: [] };
 		const [or, vc] = await Promise.allSettled([fetchModelsDevOpenRouter(fetcher), fetchVercelGateway(fetcher)]);
 		if (or.status === "fulfilled") current.openrouter = or.value;
 		else warnings.push(`clinefree: models.dev fetch failed (${or.reason instanceof Error ? or.reason.message : String(or.reason)})`);
 		if (vc.status === "fulfilled") current.vercel = vc.value;
 		else warnings.push(`clinefree: vercel gateway fetch failed (${vc.reason instanceof Error ? vc.reason.message : String(vc.reason)})`);
 
+		const bothFetched = or.status === "fulfilled" && vc.status === "fulfilled";
+		for (const id of ids) {
+			const caps = resolveCapabilities(id, current.openrouter, current.vercel);
+			if (caps.source !== "default" || bothFetched) coveredIds.add(id);
+		}
+
 		current.updatedAt = now();
+		current.coveredIds = [...coveredIds];
 		writeCache("capabilities.json", current);
 		feeds = { openrouter: current.openrouter, vercel: current.vercel };
+
+		const state = readState();
+		writeState({ ...state, timestamps: { ...state.timestamps, capabilities: now() } });
+
 		return feeds;
 	}
 
@@ -195,6 +224,7 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 				tags: state.tags,
 				timestamps: state.timestamps,
 				contractSource: cachedContract()?.source ?? "none",
+				capabilitiesCoveredIds: readCache<CachedCapabilities>("capabilities.json")?.coveredIds ?? [],
 			};
 		},
 	};

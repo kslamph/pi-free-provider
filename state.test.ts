@@ -24,7 +24,7 @@ describe("state", () => {
 		const cfg = loadConfig();
 		expect(cfg).toEqual({
 			auth: undefined,
-			sync: { minIntervalMinutes: 30, capabilityTtlMinutes: 10, notifyOnChange: true },
+			sync: { minIntervalMinutes: 30, notifyOnChange: true },
 		});
 		expect(existsSync(configPath())).toBe(true);
 		const mode = (statSync(configPath()).mode & 0o777).toString(8);

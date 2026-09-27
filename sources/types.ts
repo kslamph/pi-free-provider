@@ -21,8 +21,12 @@ export interface FreeModelSource {
 	refreshContract(force?: boolean): Promise<ContractResult>;
 	/** Fetch the current free-model lineup (with cache fallback). */
 	fetchLineup(): Promise<LineupEntry[]>;
-	/** Pull and cache the capability feeds (TTL-gated). */
-	refreshCapabilities(): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }>;
+	/**
+	 * Pull and cache the capability feeds, gated by id coverage: skipped when
+	 * every id in `ids` was already covered by a prior successful fetch, unless
+	 * `force` (manual refresh) bypasses that check.
+	 */
+	refreshCapabilities(ids: string[], force?: boolean): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }>;
 	/** Resolve one model id's capabilities using the current feeds. */
 	resolveCapabilities(id: string): ModelCapabilities;
 }

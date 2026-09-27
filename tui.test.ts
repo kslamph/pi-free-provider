@@ -5,13 +5,14 @@ const NOW = 1_000_000_000_000;
 
 const snapshot: StatusSnapshot = {
 	tags: { llms: "sdk/llms/v0.0.86", core: "sdk/core/v0.0.86", cli: "cli-v3.0.65" },
-	timestamps: { tags: NOW - 13 * 60_000, capabilities: NOW - 3 * 60_000, lineup: NOW - 2 * 60_000, contract: NOW - 13 * 60_000 },
+	timestamps: { tags: NOW - 13 * 60_000, lineup: NOW - 2 * 60_000, contract: NOW - 13 * 60_000 },
 	contractSource: "github",
 	authMode: "apiKey",
 	apiKeyMasked: "sk-1234…abcd",
 	accountEmail: "daniel@example.com",
 	minIntervalMinutes: 30,
-	capabilityTtlMinutes: 10,
+	capabilitiesCoveredCount: 5,
+	capabilitiesLineupCount: 6,
 };
 
 describe("formatStatus", () => {
@@ -20,12 +21,18 @@ describe("formatStatus", () => {
 		expect(text).toContain("cli-v3.0.65");
 		expect(text).toContain("sdk/llms/v0.0.86");
 		expect(text).toContain("github");
-		expect(text).toContain("3m ago");
 		expect(text).toContain("2m ago");
 		expect(text).toContain("in 17m"); // next tag check: 30 − 13
 		expect(text).toContain("apiKey");
 		expect(text).toContain("sk-1234…abcd");
 		expect(text).toContain("daniel@example.com");
+	});
+
+	it("shows capability coverage, not a TTL", () => {
+		const text = formatStatus(snapshot, NOW);
+		expect(text).toContain("5/6 models covered");
+		expect(text).toMatch(/Refresh/i);
+		expect(text).not.toMatch(/TTL/i);
 	});
 
 	it("warns when the contract is the baked-in fallback", () => {

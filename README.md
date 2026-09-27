@@ -52,8 +52,12 @@ from (`openrouter` / `vercel` / `default`).
 | What | When |
 |---|---|
 | live lineup | every session start (`/clinefree refresh` to force) |
-| capability feeds | when older than 10 minutes |
+| capability feeds | when the lineup contains a model id never fetched before; afterwards never re-fetched automatically — `/clinefree → Refresh now` forces a re-pull |
 | contract tags | when older than 30 minutes; files re-downloaded only when a tag changed |
+
+Capability data (context window, output cap, reasoning levels) for a given
+model is effectively static, so each model's entry is fetched once and kept.
+A delisted-then-relonged model reuses its stored entry; no wasted requests.
 
 Everything fails soft: an unreachable feed falls back to the last-known-good
 cache, then to defaults, with a warning — never a broken startup.

@@ -28,15 +28,13 @@ export interface ClinefreeConfig {
 	sync: {
 		/** Minimum gap between full tag/contract syncs, in minutes. */
 		minIntervalMinutes: number;
-		/** How long the capability feeds stay fresh, in minutes. */
-		capabilityTtlMinutes: number;
 		notifyOnChange: boolean;
 	};
 }
 
 export const DEFAULT_CONFIG: ClinefreeConfig = {
 	auth: undefined,
-	sync: { minIntervalMinutes: 30, capabilityTtlMinutes: 10, notifyOnChange: true },
+	sync: { minIntervalMinutes: 30, notifyOnChange: true },
 };
 
 /** A namespace-scoped config + cache store: one instance per source (clinefree, zenfree). */

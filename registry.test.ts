@@ -73,7 +73,7 @@ describe("syncOnce", () => {
 		});
 		const deps = makeDeps(pi, source);
 		const result = await syncOnce(deps);
-		expect(result).toEqual({ added: ["stealth/pixel-canary", "cline-free/mimo-v2.6-flash"], removed: [] });
+		expect(result).toEqual({ added: ["stealth/pixel-canary", "cline-free/mimo-v2.6-flash"], removed: [], warnings: [] });
 		expect(registered[0]?.id).toBe("clinefree");
 		const config = registered[0]?.config as Record<string, unknown>;
 		expect(config.api).toBe("openai-completions");
@@ -94,7 +94,7 @@ describe("syncOnce", () => {
 		const next = fakeSource([{ id: "stealth/pixel-canary", name: "Pixel Canary" }, { id: "new/model" }]);
 		deps.source = next;
 		const result = await syncOnce(deps);
-		expect(result).toEqual({ added: ["new/model"], removed: ["cline-free/mimo-v2.6-flash"] });
+		expect(result).toEqual({ added: ["new/model"], removed: ["cline-free/mimo-v2.6-flash"], warnings: [] });
 		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("+1 new: new/model"));
 		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("−1 delisted: cline-free/mimo-v2.6-flash"));
 		const models = (registered[0]?.config as { models: { id: string }[] }).models;
@@ -120,7 +120,7 @@ describe("syncOnce", () => {
 		const before = registered[0]?.config;
 		deps.source = { ...source, fetchLineup: vi.fn(async () => { throw new Error("network down"); }) };
 		const result = await syncOnce(deps);
-		expect(result).toEqual({ added: [], removed: [] });
+		expect(result).toEqual({ added: [], removed: [], warnings: [] });
 		expect(registered[0]?.config).toEqual(before);
 		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("network down"));
 	});
@@ -155,11 +155,32 @@ describe("syncOnce", () => {
 		expect(source.warnings).toEqual([]);
 	});
 
+	it("requests capabilities for the lineup ids, force only when asked", async () => {
+		const { pi } = fakePi();
+		const source = fakeSource(LINEUP);
+		const deps = makeDeps(pi, source);
+		await syncOnce(deps);
+		expect(source.refreshCapabilities).toHaveBeenCalledWith(LINEUP.map((e) => e.id), false);
+		await syncOnce({ ...deps, forceCapabilities: true });
+		expect(source.refreshCapabilities).toHaveBeenLastCalledWith(LINEUP.map((e) => e.id), true);
+	});
+
+	it("keeps registering on cached capabilities when the capability fetch fails", async () => {
+		const { pi, registered } = fakePi();
+		const source = fakeSource(LINEUP);
+		source.refreshCapabilities = vi.fn(async () => { throw new Error("feeds down"); });
+		const deps = makeDeps(pi, source);
+		const result = await syncOnce(deps);
+		expect(result.added).toEqual(LINEUP.map((e) => e.id));
+		expect(registered[0]?.id).toBe("clinefree");
+		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("feeds down"));
+	});
+
 	it("skips registration entirely when no credential is configured", async () => {
 		const { pi, registered } = fakePi();
 		const deps = makeDeps(pi, fakeSource(LINEUP), { config: { auth: undefined, sync: { minIntervalMinutes: 30, notifyOnChange: true } } });
 		const result = await syncOnce(deps);
-		expect(result).toEqual({ added: [], removed: [] });
+		expect(result).toEqual({ added: [], removed: [], warnings: [] });
 		expect(registered).toEqual([]);
 	});
 });
@@ -225,7 +246,7 @@ describe("syncProviders (multi-provider engine)", () => {
 			{ providerId: "zenfree", models: [{ id: "mimo-v2.6-flash-free" }], register: register("zenfree") },
 			{ providerId: "zenfree.res", models: [{ id: "muse-spark" }], register: register("zenfree.res") },
 		]);
-		deps.notify.mockClear();
+		vi.mocked(deps.notify).mockClear();
 		await syncProviders(deps, []);
 		expect(unregistered.sort()).toEqual(["zenfree", "zenfree.res"]);
 		expect(registered.providerIds).toEqual([]);
@@ -238,7 +259,7 @@ describe("syncProviders (multi-provider engine)", () => {
 		const { deps } = multiDeps();
 		const register = (providerId: string) => (m: { id: string }[]) => deps.pi.registerProvider(providerId, { models: m });
 		await syncProviders(deps, [{ providerId: "zenfree", models: [{ id: "big-pickle" }], register: register("zenfree") }]);
-		deps.notify.mockClear();
+		vi.mocked(deps.notify).mockClear();
 		await syncProviders(deps, [
 			{ providerId: "zenfree", models: [{ id: "big-pickle" }, { id: "space-bunny-free" }], register: register("zenfree") },
 			{ providerId: "zenfree.res", models: [{ id: "muse-spark" }], register: register("zenfree.res") },

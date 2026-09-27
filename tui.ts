@@ -13,13 +13,16 @@ type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1][
 
 export interface StatusSnapshot {
 	tags: Record<string, string>;
-	timestamps: { tags?: number; capabilities?: number; lineup?: number; contract?: number };
+	timestamps: { tags?: number; lineup?: number; contract?: number };
 	contractSource: "github" | "baked-in" | "none";
 	authMode?: "apiKey" | "oauth";
 	apiKeyMasked?: string;
 	accountEmail?: string;
 	minIntervalMinutes: number;
-	capabilityTtlMinutes: number;
+	/** Ids in the current lineup already covered by a capability fetch. */
+	capabilitiesCoveredCount: number;
+	/** Total ids in the current lineup. */
+	capabilitiesLineupCount: number;
 }
 
 export interface ModelRow {
@@ -72,10 +75,10 @@ export function formatStatus(s: StatusSnapshot, now = Date.now()): string {
 	} else if (s.contractSource === "none") {
 		lines.push("  contract: none yet (never synced)");
 	} else {
-		lines.push(`  contract: github (${s.tags.cli ?? "?"} · core ${s.tags.core ?? "?"} · ${s.tags.llms ?? "?"})`);
+		lines.push(`  contract: github (${s.tags.cli ?? "?"} · core ${s.tags.core ?? "?"} · ${s.tags.llms ?? "?"}) · next check ${minutesIn(s.timestamps.tags, now, s.minIntervalMinutes * 60_000)}`);
 	}
 	lines.push(
-		`  capabilities: refreshed ${minutesAgo(s.timestamps.capabilities, now)} · TTL ${s.capabilityTtlMinutes}m · next check ${minutesIn(s.timestamps.tags, now, s.minIntervalMinutes * 60_000)}`,
+		`  capabilities: ${s.capabilitiesCoveredCount}/${s.capabilitiesLineupCount} models covered (fetched once per model — use Refresh to force)`,
 	);
 	lines.push(`  lineup: synced ${minutesAgo(s.timestamps.lineup, now)}`);
 	if (s.authMode) {

@@ -104,7 +104,7 @@ interface FreeModelSource {
 
 ```
 1. GET recommended-models              → free[] lineup            (every start)
-2. capability feeds older than TTL?    → models.dev + Vercel feeds  (TTL 10 min)
+2. lineup has an id never fetched?     → models.dev + Vercel feeds  (once per model id)
 3. tag check due?                      → matching-refs × 3         (min interval 30 min)
    tag changed?                        → download + extract contract
 4. per id: resolve capabilities        → openrouter → vercel → defaults
@@ -112,7 +112,8 @@ interface FreeModelSource {
 6. diff vs registered → add/remove → notify
 ```
 
-Step 1 is one unauthenticated GET. Step 2 is two GETs on a TTL. Step 3 is three
+Step 1 is one unauthenticated GET. Step 2 is two GETs, only while the lineup
+contains ids not yet covered (manual refresh forces them). Step 3 is three
 tiny `matching-refs` calls, and only downloads on tag change.
 
 ## 5. GitHub contract
@@ -182,9 +183,10 @@ for the version-bearing headers. Any failure is soft (§9).
    `reasoning_options`, `tags`, `name`, `description`.
 3. **Defaults** — `256_000` ctx / `32_000` out / `["text"]` / `reasoning:false`.
 
-Both live feeds are fetched on a **10-minute TTL** (mirroring Cline's
-`DEFAULT_MODELS_CATALOG_CACHE_TTL_MS`) and cached in `capabilities.json`. The
-last-known-good copy is retained on outage (§9).
+Both live feeds are fetched **once per model id** (a per-id coverage set is
+cached in `capabilities.json`; a known model's feed data is treated as static)
+and re-fetched only when the lineup introduces an uncovered id, or on a manual
+`/clinefree refresh`. The last-known-good copy is retained on outage (§9).
 
 Resolution per free-model id:
 
@@ -244,7 +246,7 @@ Config `~/.pi/agent/clinefree.json`, mode `0600`:
   // "auth": { "mode": "oauth", "accessToken": "…", "refreshToken": "…",
   //           "expiresAt": 1790000000000,
   //           "account": { "id": "usr-…", "email": "…" } },
-  "sync": { "minIntervalMinutes": 30, "capabilityTtlMinutes": 10, "notifyOnChange": true }
+  "sync": { "minIntervalMinutes": 30, "notifyOnChange": true }
 }
 ```
 
@@ -266,11 +268,13 @@ Config `~/.pi/agent/clinefree.json`, mode `0600`:
 
 - **`session_start`**:
   - always re-fetch the live lineup (one cheap GET) and re-register on diff;
-  - refresh the capability feeds when their cache is older than
-    `sync.capabilityTtlMinutes` (default 10);
+  - refresh the capability feeds only when the lineup contains a model id that
+    was never fetched before (per-id coverage set persisted in
+    `capabilities.json`; feed data for a known model is effectively static);
   - resolve tags when `sync.minIntervalMinutes` (default 30) has elapsed, and
     download the contract only if a tag changed.
-- **`/clinefree refresh`** forces all three steps.
+- **`/clinefree refresh`** forces all three steps (including a full
+  capability re-pull even for already-covered ids).
 - **`/clinefree`**: status (tags, last sync, auth mode/account), model list
   (annotating each model's capability source: `openrouter` / `vercel` /
   `default`), auth, *refresh now*, and the add/remove history.
@@ -355,8 +359,9 @@ All writes are atomic (temp file + rename).
 - **Source disagreement is inherent** (deepseek: 384000 vs 32768). The
   OpenRouter-first rule is deliberate and matches Cline's runtime path; any
   future conflict is resolved by the same rule, not ad hoc.
-- **models.dev api.json is ~4.9 MB.** Mitigated by the 10-minute TTL and by
-  reducing the payload to the `openrouter` block before caching.
+- **models.dev api.json is ~4.9 MB.** Mitigated by fetching the feeds at most
+  once per newly listed model (never on a timer) and by reducing the payload to
+  the `openrouter` block before caching.
 - **Feed lag** (models.dev lacks some Vercel-only stealth ids) is handled by the
   Vercel fallback; a model missing from both gets defaults and is visibly
   annotated as such in `/clinefree` and the warning path.
