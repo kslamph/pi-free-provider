@@ -53,25 +53,25 @@
       "id": "5",
       "subject": "Task 5: capabilities.ts — precedence resolution",
       "description": "ModelCapabilities, DEFAULT_CAPABILITIES (256000/32000/[text]/false), resolveCapabilities openrouter exact→slug then vercel exact→slug then defaults; modalities ∩ {text,image}. Tests pin deepseek 384000, pixel-canary 262144 vercel, space-bunny openrouter, unknown→defaults, gemini slug rule. Commit feat: capability precedence.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing capabilities.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624824,
-      "updatedAt": 1790515961238
+      "updatedAt": 1790516008810
     },
     {
       "id": "6",
       "subject": "Task 6: mapping.ts — capabilities → pi model",
       "description": "LEVELS, ProviderModel, toProviderModel: thinkingLevelMap (off←none/toggle; 1:1 advertised; null otherwise), compat thinkingFormat openrouter iff effort, zero cost, name rule. Tests for deepseek/pixel-canary/mimo/gemini maps. Commit feat: capabilities→pi model mapping.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing mapping.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790515624825
+      "updatedAt": 1790516008810
     },
     {
       "id": "7",
