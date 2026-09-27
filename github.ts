@@ -7,6 +7,7 @@
  */
 
 export const GITHUB_API_BASE = "https://api.github.com/repos/cline/cline/git/matching-refs";
+export const RAW_API_TAG_BASE = "https://api.github.com/repos/cline/cline/git/tags";
 export const RAW_BASE = "https://raw.githubusercontent.com/cline/cline";
 
 export const TAG_PREFIXES = {
@@ -24,7 +25,19 @@ export interface ResolvedTag {
 
 interface MatchingRef {
 	ref?: string;
-	object?: { sha?: string };
+	object?: { sha?: string; type?: string };
+}
+
+/** Annotated tags point at a tag *object*; raw fetches need the commit SHA. */
+async function dereferenceToCommit(sha: string, fetcher: typeof fetch): Promise<string> {
+	const response = await fetcher(`${RAW_API_TAG_BASE}/${sha}`);
+	if (!response.ok) {
+		throw new Error(`tag dereference failed for ${sha.slice(0, 7)}: HTTP ${response.status}`);
+	}
+	const payload = (await response.json().catch(() => ({}))) as { object?: { sha?: string; type?: string } };
+	const commit = payload.object?.sha;
+	if (!commit) throw new Error("tag dereference returned no commit sha");
+	return commit;
 }
 
 /** Compare two dotted version strings numerically; returns >0 when a > b. */
@@ -57,12 +70,14 @@ export async function resolveLatestTag(prefix: string, fetcher: typeof fetch = f
 	const refs = (await response.json().catch(() => [])) as MatchingRef[];
 	const tags = refs
 		.filter((r) => typeof r.ref === "string" && r.ref.startsWith("refs/tags/") && typeof r.object?.sha === "string")
-		.map((r) => ({ tag: r.ref!.slice("refs/tags/".length), sha: r.object!.sha! }));
+		.map((r) => ({ tag: r.ref!.slice("refs/tags/".length), sha: r.object!.sha!, type: r.object?.type }));
 	if (tags.length === 0) {
 		throw new Error(`no tags found under ${prefix}`);
 	}
 	tags.sort((a, b) => compareSemver(versionOf(a.tag), versionOf(b.tag)));
-	return tags[tags.length - 1]!;
+	const newest = tags[tags.length - 1]!;
+	const sha = newest.type === "tag" ? await dereferenceToCommit(newest.sha, fetcher) : newest.sha;
+	return { tag: newest.tag, sha };
 }
 
 /** Fetch a raw file content at an immutable commit SHA. */

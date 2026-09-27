@@ -1,44 +1,154 @@
 {
-	"providers": {
-		"openrouter": {
-			"npm": "@openrouter/ai-sdk-provider",
-			"models": {
-				"stealth/space-bunny-alpha": {
-					"id": "stealth/space-bunny-alpha",
-					"name": "Space Bunny Alpha",
-					"limit": { "context": 1000000, "output": 524288 },
-					"modalities": { "input": ["text", "image", "video"], "output": ["text"] },
-					"reasoning_options": [{ "type": "effort", "values": ["low", "medium", "high", "xhigh", "max"] }]
-				},
-				"deepseek/deepseek-v4.1-flash": {
-					"id": "deepseek/deepseek-v4.1-flash",
-					"name": "DeepSeek: V4.1 Flash",
-					"limit": { "context": 1048576, "output": 384000 },
-					"modalities": { "input": ["text", "image"], "output": ["text"] },
-					"reasoning_options": [{ "type": "toggle" }, { "type": "effort", "values": ["low", "high", "max"] }]
-				},
-				"google/gemini-3.8-flash": {
-					"id": "google/gemini-3.8-flash",
-					"name": "Google: Gemini 3.8 Flash",
-					"limit": { "context": 1048576, "output": 65536 },
-					"modalities": { "input": ["text", "image", "video", "audio", "pdf"], "output": ["text"] },
-					"reasoning_options": [{ "type": "effort", "values": ["low", "medium", "high"] }]
-				},
-				"xiaomi/mimo-v2.6-flash": {
-					"id": "xiaomi/mimo-v2.6-flash",
-					"name": "Xiaomi: MiMo-V2.6-Flash",
-					"limit": { "context": 1048576, "output": 131072 },
-					"modalities": { "input": ["text", "image", "audio", "video"], "output": ["text"] },
-					"reasoning_options": [{ "type": "toggle" }]
-				},
-				"meta/muse-spark-1.3-contributor": {
-					"id": "meta/muse-spark-1.3-contributor",
-					"name": "Meta: Muse Spark 1.3 Contributor",
-					"limit": { "context": 1048576, "output": 943718 },
-					"modalities": { "input": ["text", "image", "video", "pdf", "audio"], "output": ["text"] },
-					"reasoning_options": [{ "type": "effort", "values": ["minimal", "low", "medium", "high", "xhigh", "max"] }]
-				}
-			}
-		}
-	}
+  "openrouter": {
+    "npm": "@openrouter/ai-sdk-provider",
+    "models": {
+      "stealth/space-bunny-alpha": {
+        "id": "stealth/space-bunny-alpha",
+        "name": "Space Bunny Alpha",
+        "limit": {
+          "context": 1000000,
+          "output": 524288
+        },
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        ]
+      },
+      "deepseek/deepseek-v4.1-flash": {
+        "id": "deepseek/deepseek-v4.1-flash",
+        "name": "DeepSeek: V4.1 Flash",
+        "limit": {
+          "context": 1048576,
+          "output": 384000
+        },
+        "modalities": {
+          "input": [
+            "text",
+            "image"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "reasoning_options": [
+          {
+            "type": "toggle"
+          },
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "high",
+              "max"
+            ]
+          }
+        ]
+      },
+      "google/gemini-3.8-flash": {
+        "id": "google/gemini-3.8-flash",
+        "name": "Google: Gemini 3.8 Flash",
+        "limit": {
+          "context": 1048576,
+          "output": 65536
+        },
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video",
+            "audio",
+            "pdf"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ]
+      },
+      "xiaomi/mimo-v2.6-flash": {
+        "id": "xiaomi/mimo-v2.6-flash",
+        "name": "Xiaomi: MiMo-V2.6-Flash",
+        "limit": {
+          "context": 1048576,
+          "output": 131072
+        },
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "audio",
+            "video"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "reasoning_options": [
+          {
+            "type": "toggle"
+          }
+        ]
+      },
+      "meta/muse-spark-1.3-contributor": {
+        "id": "meta/muse-spark-1.3-contributor",
+        "name": "Meta: Muse Spark 1.3 Contributor",
+        "limit": {
+          "context": 1048576,
+          "output": 943718
+        },
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video",
+            "pdf",
+            "audio"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        ]
+      }
+    }
+  }
 }

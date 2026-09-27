@@ -67,12 +67,16 @@ function toFeedEntry(model: Record<string, unknown>): FeedEntry | undefined {
 	};
 }
 
-/** Reduce a models.dev api.json payload to its openrouter block. */
+/** Reduce a models.dev api.json payload to its openrouter block.
+ *
+ * Live shape (verified 2026-09-27): the top level IS the provider map
+ * (`payload.openrouter.models`). A `providers` wrapper is tolerated for
+ * forward compatibility.
+ */
 export function reduceModelsDev(payload: unknown): Record<string, FeedEntry> {
 	if (!payload || typeof payload !== "object") return {};
-	const providers = (payload as Record<string, unknown>).providers;
-	if (!providers || typeof providers !== "object") return {};
-	const openrouter = (providers as Record<string, unknown>).openrouter;
+	const top = payload as Record<string, unknown>;
+	const openrouter = top.openrouter ?? (top.providers as Record<string, unknown> | undefined)?.openrouter;
 	if (!openrouter || typeof openrouter !== "object") return {};
 	const models = (openrouter as Record<string, unknown>).models ?? openrouter;
 	if (!models || typeof models !== "object" || Array.isArray(models)) return {};

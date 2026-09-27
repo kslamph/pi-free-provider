@@ -44,6 +44,28 @@ describe("resolveLatestTag", () => {
 		const { fetcher } = stubFetcher("{}", 403);
 		await expect(resolveLatestTag(TAG_PREFIXES.cli, fetcher)).rejects.toThrow(/403/);
 	});
+
+	it("dereferences annotated tags to their commit SHA", async () => {
+		const bodies = new Map<string, string>([
+			[
+				"https://api.github.com/repos/cline/cline/git/matching-refs/tags/sdk/llms/v",
+				JSON.stringify([
+					// annotated tag: object points at the TAG object, not the commit
+					{ ref: "refs/tags/sdk/llms/v0.0.86", object: { sha: "tag-object-sha", type: "tag" } },
+				]),
+			],
+			[
+				"https://api.github.com/repos/cline/cline/git/tags/tag-object-sha",
+				JSON.stringify({ object: { sha: "real-commit-sha", type: "commit" } }),
+			],
+		]);
+		const fetcher: typeof fetch = async (input) => {
+			const url = typeof input === "string" ? input : input.toString();
+			return new Response(bodies.get(url) ?? "{}", { status: 200, headers: { "content-type": "application/json" } });
+		};
+		const result = await resolveLatestTag(TAG_PREFIXES.llms, fetcher);
+		expect(result).toEqual({ tag: "sdk/llms/v0.0.86", sha: "real-commit-sha" });
+	});
 });
 
 describe("fetchRawAtSha", () => {
