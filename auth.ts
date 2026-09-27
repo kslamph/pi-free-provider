@@ -231,3 +231,23 @@ export async function runDeviceFlow(
 		...(tokens.expiresAt !== undefined ? { expiresAt: tokens.expiresAt } : {}),
 	};
 }
+
+/**
+ * Validate an OpenCode Zen workspace key (spec §zen-5): the console config
+ * endpoint is the cheapest credentialed call. "rejected" covers 401/403 —
+ * note this is stricter than the runtime invalidation policy (401 only).
+ */
+import { CONSOLE_CONFIG_URL } from "./sources/opencode-config.ts";
+
+export async function validateZenKey(key: string, fetcher: typeof fetch = fetch): Promise<"ok" | "rejected" | "error"> {
+	try {
+		const response = await fetcher(CONSOLE_CONFIG_URL, {
+			headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+		});
+		if (response.ok) return "ok";
+		if (response.status === 401 || response.status === 403) return "rejected";
+		return "error";
+	} catch {
+		return "error";
+	}
+}

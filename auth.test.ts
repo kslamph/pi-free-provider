@@ -5,6 +5,7 @@ import {
 	refreshClineToken,
 	runDeviceFlow,
 	validateCredential,
+	validateZenKey,
 } from "./auth.ts";
 import type { Credential } from "./state.ts";
 
@@ -134,5 +135,26 @@ describe("runDeviceFlow", () => {
 		await expect(
 			runDeviceFlow(HEADERS, { fetcher, sleepFn: vi.fn().mockResolvedValue(undefined), now: () => 1_000 }),
 		).rejects.toThrow(/access_denied|denied/i);
+	});
+});
+
+describe("validateZenKey", () => {
+	it("accepts a 200 from the console config endpoint", async () => {
+		const fetcher = (async () => new Response("{}", { status: 200 })) as typeof fetch;
+		expect(await validateZenKey("oc_sk_ok", fetcher)).toBe("ok");
+	});
+
+	it("rejects 401 and 403", async () => {
+		const unauthorized = (async () => new Response('{"_tag":"Unauthorized"}', { status: 401 })) as typeof fetch;
+		expect(await validateZenKey("bad", unauthorized)).toBe("rejected");
+		const forbidden = (async () => new Response("forbidden", { status: 403 })) as typeof fetch;
+		expect(await validateZenKey("bad", forbidden)).toBe("rejected");
+	});
+
+	it("reports network trouble as error", async () => {
+		const broken = (async () => {
+			throw new Error("dns failure");
+		}) as typeof fetch;
+		expect(await validateZenKey("k", broken)).toBe("error");
 	});
 });
