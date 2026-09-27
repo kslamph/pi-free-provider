@@ -22,9 +22,8 @@ export interface ZenModelEntry {
 	free: boolean;
 	limit?: { context?: number; output?: number };
 	input?: ("text" | "image")[];
-	/** Upstream SDK package (backend routing hint). NOT a client transport signal — live
-	 * 2026-09-27: the gateway 403-gates /responses for the free tier, so every free model
-	 * rides chat completions regardless of this field. */
+	/** Upstream SDK package. `aisdk:@ai-sdk/openai` ⇒ the model speaks the OpenAI
+	 * Responses API (muse-spark); anything else rides chat completions. */
 	package?: string;
 }
 

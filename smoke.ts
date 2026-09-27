@@ -169,7 +169,8 @@ if (zenKey) {
 		}
 	}
 
-	// z6. Optional Responses-API probe when a muse-spark model is free.
+	// z6. Responses-API probe for the zenfree.res transport (agentic shape required —
+	//    bare /responses pings are 403-gated exactly like bare chat pings).
 	const responsesModel = responsesIds[0];
 	if (responsesModel) {
 		try {
@@ -187,17 +188,18 @@ if (zenKey) {
 					model: responsesModel,
 					input: "reply with the single word: pong",
 					stream: true,
+					tools: ["read", "shell", "edit", "write"].map((name) => ({
+						type: "function",
+						name,
+						description: name,
+						parameters: { type: "object", properties: {} },
+					})),
 				}),
 				signal: AbortSignal.timeout(60_000),
 			});
 			const text = await response.text();
-			const tierGated = response.status === 403 && text.includes("FreeTierError");
-			const ok = (response.ok && text.includes("data:")) || tierGated;
-			report(
-				`zen responses probe (${responsesModel})`,
-				ok,
-				tierGated ? `HTTP 403 FreeTierError — expected: /responses is free-tier gated (live 2026-09-27); zenfree.res lights up if OpenCode opens it` : `HTTP ${response.status} · ${text.slice(0, 80).replace(/\n/g, " ")}`,
-			);
+			const ok = response.ok && text.includes("response.created");
+			report(`zen responses probe (${responsesModel})`, ok, `HTTP ${response.status} · ${text.slice(0, 80).replace(/\n/g, " ")}`);
 		} catch (error) {
 			report(`zen responses probe (${responsesModel})`, false, error instanceof Error ? error.message : String(error));
 		}

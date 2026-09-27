@@ -170,6 +170,10 @@ describe("zenfree session_start wiring", () => {
 		expect((zen!.config as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v9");
 		const modelIds = (zen!.config as { models: { id: string }[] }).models.map((m) => m.id);
 		expect(modelIds).toContain("big-pickle");
+		const zenRes = registered.find((r) => r.id === "zenfree.res");
+		expect(zenRes).toBeDefined();
+		expect((zenRes!.config as { api: string }).api).toBe("openai-responses");
+		expect((zenRes!.config as { models: { id: string }[] }).models.map((m) => m.id)).toEqual(["muse-spark-1.3-contributor-free"]);
 	});
 
 	it("unregisters the zen provider and prompts a switch when the free lineup empties", async () => {

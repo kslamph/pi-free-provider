@@ -161,12 +161,21 @@ describe("zen source capabilities", () => {
 });
 
 describe("zen source transport + status", () => {
-	it("routes every current free model through completions (live: /responses is tier-gated)", async () => {
+	it("routes the responses-package model to zenfree.res, everything else to completions", async () => {
 		const { deps } = makeDeps();
 		const source = createZenSource(deps);
 		await source.fetchLineup(CRED);
-		expect(source.resolveTransport("muse-spark-1.3-contributor-free")).toBe("openai-completions");
+		// live 2026-09-27: muse's /responses answers 200 once the request carries
+		// agentic tools (the earlier 403 was the agentic-shape gate, not a tier gate)
+		expect(source.resolveTransport("muse-spark-1.3-contributor-free")).toBe("openai-responses");
 		expect(source.resolveTransport("big-pickle")).toBe("openai-completions");
+		expect(source.resolveTransport("space-bunny-free")).toBe("openai-completions");
+	});
+
+	it("falls back to the muse-spark prefix when the config carries no package", async () => {
+		const source = createZenSource(makeDeps().deps);
+		expect(source.resolveTransport("muse-spark-2.0-free")).toBe("openai-responses");
+		expect(source.resolveTransport("mimo-v2.6-flash-free")).toBe("openai-completions");
 	});
 
 	it("status reports timestamps and the contract source", async () => {
