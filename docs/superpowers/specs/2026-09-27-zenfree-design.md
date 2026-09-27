@@ -74,8 +74,11 @@ or unreachable registry → baked-in UA + warning; nothing blocks.
 - **Capability precedence** per model id:
   1. **console config entry** (authoritative): `limit.context` → contextWindow,
      `limit.output` → maxTokens, `capabilities.input` ∩ {text,image}, `name`.
-  2. **models.dev `opencode` block** fills what config lacks (reasoning/toggle/effort, any
-     missing limits). Same no-`providers`-wrapper payload shape as the openrouter block.
+  2. **models.dev `opencode` block** fills any missing limits/modalities/name. Same
+     no-`providers`-wrapper payload shape as the openrouter block. It deliberately does NOT
+     contribute reasoning/toggle/effort: the zen policy is **always-on reasoning with no effort
+     control** (`reasoning: true`, `toggle: false`, all thinking levels null) regardless of what
+     any feed advertises — matching pi's built-in opencode catalog treatment of these models.
   3. **zen defaults**: 200K ctx / 32K out / text-only / reasoning **on** (every current free
      model reasons), no effort control → `thinkingLevelMap: null` (levels hidden, reasoning
      sent verbatim — matches pi's built-in opencode catalog treatment).

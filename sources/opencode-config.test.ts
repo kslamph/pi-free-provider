@@ -146,6 +146,13 @@ describe("mergeZenCapabilities", () => {
 
 	});
 
+	it("zen policy: dev effort options are ignored — reasoning always on, no toggle", () => {
+		const devWithEffort = devEntry({ effortValues: ["minimal", "low", "medium", "high", "xhigh"], toggle: true });
+		const merged = mergeZenCapabilities(undefined, devWithEffort);
+		expect(merged.reasoning).toBe(true);
+		expect(merged.toggle).toBe(false);
+	});
+
 	it("non text/image modalities are dropped; empty falls back to text", () => {
 		const merged = mergeZenCapabilities(configEntry({ input: ["audio", "video"] as unknown as ("text" | "image")[] }), undefined);
 		expect(merged.input).toEqual(["text"]);

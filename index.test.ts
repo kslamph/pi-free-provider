@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -101,5 +101,88 @@ describe("zen bootstrap", () => {
 		(mod.default as (pi: unknown) => void)(fakePi);
 		expect(commands).toEqual(expect.arrayContaining(["clinefree", "zenfree"]));
 		expect(typeof handlers["session_start"]).toBe("function");
+	});
+});
+
+describe("zenfree session_start wiring", () => {
+	let consolePayload: unknown;
+	let routerCalls: string[];
+
+	function fakeCtx(model?: { id: string }) {
+		return { ui: { notify: vi.fn() }, model } as never;
+	}
+
+	function stubNetwork() {
+		const consoleConfig = JSON.parse(readFileSync(join(import.meta.dirname, "test-fixtures", "console-config.json"), "utf-8"));
+		consoleConfig.providers.opencode.settings.baseURL = "https://opencode.ai/inference/openai/v9";
+		const updateApi = JSON.parse(readFileSync(join(import.meta.dirname, "test-fixtures", "update-api.json"), "utf-8"));
+		const modelsdev = JSON.parse(readFileSync(join(import.meta.dirname, "test-fixtures", "modelsdev-opencode.json"), "utf-8"));
+		const fetcher = (async (url: string) => {
+			routerCalls.push(String(url));
+			if (String(url).includes("/api/v2/config")) return new Response(JSON.stringify(consolePayload ?? consoleConfig), { status: 200 });
+			if (String(url).includes("update/api")) return new Response(JSON.stringify(updateApi), { status: 200 });
+			if (String(url).includes("models.dev")) return new Response(JSON.stringify(modelsdev), { status: 200 });
+			return new Response("nope", { status: 404 });
+		}) as typeof fetch;
+		vi.stubGlobal("fetch", fetcher);
+	}
+
+	beforeEach(() => {
+		routerCalls = [];
+		consolePayload = undefined;
+		process.env.ZENFREE_CONFIG = join(tmp, "zenfree.json");
+		process.env.ZENFREE_CACHE = join(tmp, "zcache");
+		writeFileSync(process.env.ZENFREE_CONFIG, JSON.stringify({
+			auth: { mode: "apiKey", apiKey: "oc_sk_test" },
+			sync: { minIntervalMinutes: 30, notifyOnChange: true },
+		}));
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	async function boot() {
+		const commands: string[] = [];
+		const handlers: Record<string, unknown> = {};
+		const registered: { id: string; config: Record<string, unknown> }[] = [];
+		const unregistered: string[] = [];
+		const fakePi = {
+			registerProvider: (id: string, config: unknown) => registered.push({ id, config: config as Record<string, unknown> }),
+			unregisterProvider: (id: string) => unregistered.push(id),
+			registerCommand: (name: string) => commands.push(name),
+			on: (event: string, handler: unknown) => {
+				handlers[event] = handler;
+			},
+		};
+		const mod = await import("./index.ts");
+		(mod.default as (pi: unknown) => void)(fakePi);
+		return { handlers, registered, unregistered };
+	}
+
+	it("syncs zen at session start even without a clinefree credential, registering under the live gateway url", async () => {
+		stubNetwork();
+		const { handlers, registered } = await boot();
+		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => Promise<void>;
+		await handler({ reason: "new" }, fakeCtx());
+		const zen = registered.find((r) => r.id === "zenfree");
+		expect(zen).toBeDefined();
+		expect((zen!.config as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v9");
+		const modelIds = (zen!.config as { models: { id: string }[] }).models.map((m) => m.id);
+		expect(modelIds).toContain("big-pickle");
+	});
+
+	it("unregisters the zen provider and prompts a switch when the free lineup empties", async () => {
+		stubNetwork();
+		const { handlers, unregistered } = await boot();
+		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => Promise<void>;
+		const ctx = { ui: { notify: vi.fn() }, model: { id: "big-pickle" } } as never;
+		await handler({ reason: "new" }, ctx);
+		consolePayload = { providers: { opencode: { models: { paid: { cost: [{ input: 3, output: 1 }] } } } } };
+		await handler({ reason: "new" }, ctx);
+		expect(unregistered).toContain("zenfree");
+		const calls = (ctx as { ui: { notify: ReturnType<typeof vi.fn> } }).ui.notify.mock.calls.map((c) => String(c[0]));
+		expect(calls.some((m) => m.includes("free lineup is empty"))).toBe(true);
+		expect(calls.some((m) => /big-pickle.*switch|switch.*big-pickle/i.test(m))).toBe(true);
 	});
 });

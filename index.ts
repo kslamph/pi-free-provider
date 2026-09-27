@@ -290,18 +290,21 @@ export default function clinefree(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		ui = ctx.ui;
 		getModel = () => ctx.model;
+
+		// clinefree — independent of zenfree; a missing cline credential must not
+		// short-circuit the other source's sync.
 		resetConversation(event.reason);
 		if (!config.auth) {
 			notify("clinefree: no credential — run /clinefree to sign in with a Cline account or API key");
-			return;
-		}
-		try {
-			await fullSync();
-		} catch (error) {
-			notify(`clinefree: sync error (${error instanceof Error ? error.message : String(error)}) — models unchanged`);
+		} else {
+			try {
+				await fullSync();
+			} catch (error) {
+				notify(`clinefree: sync error (${error instanceof Error ? error.message : String(error)}) — models unchanged`);
+			}
 		}
 
-		// zenfree: independent sync — a clinefree failure must not touch zen.
+		// zenfree — independent of clinefree (own guard, own try/catch).
 		resetZenConversation(event.reason);
 		if (!zenConfig.auth) {
 			notify("zenfree: no workspace key — run /zenfree to add one");
@@ -382,10 +385,14 @@ export default function clinefree(pi: ExtensionAPI): void {
 		registered: zenRegistered,
 	};
 
-	/** Full zen sync: contract → lineup+caps → register via the multi-provider engine. */
+	/**
+	 * Full zen sync: lineup first (it carries the authoritative gateway url),
+	 * then the contract — so a first registration uses the live config
+	 * baseURL, not the baked-in fallback — then caps, then registration.
+	 */
 	const zenSync = async (force = false): Promise<void> => {
-		zenCurrentContract = await zenSource.refreshContract(force);
 		const lineup = await zenSource.fetchLineup(zenConfig.auth);
+		zenCurrentContract = await zenSource.refreshContract(force);
 		const ids = lineup.map((entry) => entry.id);
 		const feeds = await zenSource.refreshCapabilities(ids, force);
 		void feeds;
