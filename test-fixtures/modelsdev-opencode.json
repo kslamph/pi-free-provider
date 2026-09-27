@@ -1,0 +1,167 @@
+{
+	"opencode": {
+		"name": "OpenCode Zen",
+		"models": {
+			"mimo-v2.6-flash-free": {
+				"id": "mimo-v2.6-flash-free",
+				"name": "MiMo-V2.6-Flash Free",
+				"description": "MiMo Flash model for multimodal coding agents and long-context automation",
+				"family": "mimo",
+				"attachment": true,
+				"reasoning": true,
+				"reasoning_options": [],
+				"tool_call": true,
+				"interleaved": {
+					"field": "reasoning_content"
+				},
+				"temperature": true,
+				"release_date": "2026-09-22",
+				"last_updated": "2026-09-22",
+				"modalities": {
+					"input": [
+						"text",
+						"image",
+						"audio",
+						"video"
+					],
+					"output": [
+						"text"
+					]
+				},
+				"open_weights": true,
+				"limit": {
+					"context": 200000,
+					"output": 32000
+				},
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cache_read": 0
+				}
+			},
+			"nemotron-3-ultra-free": {
+				"id": "nemotron-3-ultra-free",
+				"name": "Nemotron 3 Ultra Free",
+				"description": "Largest Nemotron 3 model for maximum open-weight reasoning and agent accuracy",
+				"family": "nemotron-free",
+				"attachment": false,
+				"reasoning": true,
+				"reasoning_options": [],
+				"tool_call": true,
+				"interleaved": {
+					"field": "reasoning_content"
+				},
+				"temperature": true,
+				"knowledge": "2026-02",
+				"release_date": "2026-06-04",
+				"last_updated": "2026-06-04",
+				"modalities": {
+					"input": [
+						"text"
+					],
+					"output": [
+						"text"
+					]
+				},
+				"open_weights": true,
+				"limit": {
+					"context": 1000000,
+					"output": 128000
+				},
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cache_read": 0
+				}
+			},
+			"big-pickle": {
+				"id": "big-pickle",
+				"name": "Big Pickle",
+				"description": "Reasoning model for deliberate analysis, multi-step problem solving, and tool use",
+				"family": "big-pickle",
+				"attachment": false,
+				"reasoning": true,
+				"reasoning_options": [],
+				"tool_call": true,
+				"interleaved": {
+					"field": "reasoning_content"
+				},
+				"structured_output": true,
+				"temperature": true,
+				"knowledge": "2025-01",
+				"release_date": "2025-10-17",
+				"last_updated": "2025-10-17",
+				"modalities": {
+					"input": [
+						"text"
+					],
+					"output": [
+						"text"
+					]
+				},
+				"open_weights": false,
+				"limit": {
+					"context": 200000,
+					"input": 160000,
+					"output": 32000
+				},
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cache_read": 0,
+					"cache_write": 0
+				}
+			},
+			"muse-spark-1.3-contributor-free": {
+				"id": "muse-spark-1.3-contributor-free",
+				"name": "Muse Spark 1.3 Free",
+				"description": "Muse Spark 1.3 is a multimodal reasoning model from Meta for coding and agentic workflows.",
+				"family": "muse-free",
+				"attachment": true,
+				"reasoning": true,
+				"reasoning_options": [
+					{
+						"type": "effort",
+						"values": [
+							"minimal",
+							"low",
+							"medium",
+							"high",
+							"xhigh"
+						]
+					}
+				],
+				"tool_call": true,
+				"structured_output": true,
+				"temperature": true,
+				"release_date": "2026-09-02",
+				"last_updated": "2026-09-02",
+				"modalities": {
+					"input": [
+						"text",
+						"image",
+						"video",
+						"pdf",
+						"audio"
+					],
+					"output": [
+						"text"
+					]
+				},
+				"open_weights": false,
+				"limit": {
+					"context": 1048576,
+					"output": 131072
+				},
+				"provider": {
+					"npm": "@ai-sdk/openai"
+				},
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cache_read": 0
+				}
+			}
+		}
+	}
+}

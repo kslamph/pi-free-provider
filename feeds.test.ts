@@ -1,7 +1,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { fetchModelsDevOpenRouter, fetchVercelGateway, reduceModelsDev, reduceVercel } from "./feeds.ts";
+import {
+	MODELS_DEV_URL,
+	fetchModelsDevModels,
+	fetchModelsDevOpenRouter,
+	fetchVercelGateway,
+	reduceModelsDev,
+	reduceModelsDevProvider,
+	reduceVercel,
+} from "./feeds.ts";
 
 const dir = join(import.meta.dirname, "test-fixtures");
 const modelsdev = readFileSync(join(dir, "modelsdev.json"), "utf8");
@@ -82,5 +90,40 @@ describe("feed fetchers", () => {
 		const fetcher: typeof fetch = async () => new Response("nope", { status: 503 });
 		await expect(fetchModelsDevOpenRouter(fetcher)).rejects.toThrow(/503/);
 		await expect(fetchVercelGateway(fetcher)).rejects.toThrow(/503/);
+	});
+});
+
+describe("fetchModelsDevModels", () => {
+	const ocPayload = JSON.parse(readFileSync("test-fixtures/modelsdev-opencode.json", "utf-8"));
+
+	it("extracts the opencode block from the wrapper-less payload", async () => {
+		const entries = reduceModelsDevProvider(ocPayload, "opencode");
+		expect(Object.keys(entries).sort()).toEqual(
+			["big-pickle", "mimo-v2.6-flash-free", "muse-spark-1.3-contributor-free", "nemotron-3-ultra-free"].sort(),
+		);
+		const bp = entries["big-pickle"]!;
+		expect(bp.contextWindow).toBe(200_000);
+		expect(bp.maxTokens).toBe(32_000);
+		expect(bp.name).toBe("Big Pickle");
+	});
+
+	it("returns empty for an unknown provider id", () => {
+		expect(reduceModelsDevProvider(ocPayload, "does-not-exist")).toEqual({});
+	});
+
+	it("openrouter wrapper still extracts the same entries as before", () => {
+		const orPayload = JSON.parse(readFileSync("test-fixtures/modelsdev.json", "utf-8"));
+		const viaParam = reduceModelsDevProvider(orPayload, "openrouter");
+		const viaLegacy = reduceModelsDev(orPayload);
+		expect(viaParam).toEqual(viaLegacy);
+	});
+
+	it("fetchModelsDevModels requests the feed url and reduces the given provider", async () => {
+		const fetcher = (async (url: string) => {
+			expect(url).toBe(MODELS_DEV_URL);
+			return new Response(JSON.stringify(ocPayload), { status: 200 });
+		}) as typeof fetch;
+		const entries = await fetchModelsDevModels("opencode", fetcher);
+		expect(entries["big-pickle"]).toBeDefined();
 	});
 });

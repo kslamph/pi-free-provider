@@ -67,18 +67,18 @@ function toFeedEntry(model: Record<string, unknown>): FeedEntry | undefined {
 	};
 }
 
-/** Reduce a models.dev api.json payload to its openrouter block.
+/** Reduce a models.dev api.json payload to one provider's block.
  *
  * Live shape (verified 2026-09-27): the top level IS the provider map
- * (`payload.openrouter.models`). A `providers` wrapper is tolerated for
- * forward compatibility.
+ * (`payload.openrouter.models`, `payload.opencode.models`). A `providers`
+ * wrapper is tolerated for forward compatibility.
  */
-export function reduceModelsDev(payload: unknown): Record<string, FeedEntry> {
+export function reduceModelsDevProvider(payload: unknown, providerId: string): Record<string, FeedEntry> {
 	if (!payload || typeof payload !== "object") return {};
 	const top = payload as Record<string, unknown>;
-	const openrouter = top.openrouter ?? (top.providers as Record<string, unknown> | undefined)?.openrouter;
-	if (!openrouter || typeof openrouter !== "object") return {};
-	const models = (openrouter as Record<string, unknown>).models ?? openrouter;
+	const provider = top[providerId] ?? (top.providers as Record<string, unknown> | undefined)?.[providerId];
+	if (!provider || typeof provider !== "object") return {};
+	const models = (provider as Record<string, unknown>).models ?? provider;
 	if (!models || typeof models !== "object" || Array.isArray(models)) return {};
 	const out: Record<string, FeedEntry> = {};
 	for (const model of Object.values(models as Record<string, unknown>)) {
@@ -87,6 +87,11 @@ export function reduceModelsDev(payload: unknown): Record<string, FeedEntry> {
 		if (entry) out[entry.id] = entry;
 	}
 	return out;
+}
+
+/** Back-compat alias: the openrouter block. */
+export function reduceModelsDev(payload: unknown): Record<string, FeedEntry> {
+	return reduceModelsDevProvider(payload, "openrouter");
 }
 
 /** Reduce a Vercel AI Gateway /v1/models payload. */
@@ -121,11 +126,16 @@ export function reduceVercel(payload: unknown): Record<string, FeedEntry> {
 	return out;
 }
 
-/** Fetch and reduce the models.dev openrouter block. Throws on !ok. */
-export async function fetchModelsDevOpenRouter(fetcher: typeof fetch = fetch): Promise<Record<string, FeedEntry>> {
+/** Fetch and reduce one provider's block from models.dev. Throws on !ok. */
+export async function fetchModelsDevModels(providerId: string, fetcher: typeof fetch = fetch): Promise<Record<string, FeedEntry>> {
 	const response = await fetcher(MODELS_DEV_URL);
 	if (!response.ok) throw new Error(`models.dev fetch failed: HTTP ${response.status}`);
-	return reduceModelsDev(await response.json());
+	return reduceModelsDevProvider(await response.json(), providerId);
+}
+
+/** Fetch and reduce the models.dev openrouter block. Throws on !ok. */
+export async function fetchModelsDevOpenRouter(fetcher: typeof fetch = fetch): Promise<Record<string, FeedEntry>> {
+	return fetchModelsDevModels("openrouter", fetcher);
 }
 
 /** Fetch and reduce the Vercel AI Gateway listing. Throws on !ok. */
