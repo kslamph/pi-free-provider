@@ -111,6 +111,7 @@ describe("mergeZenCapabilities", () => {
 			maxTokens: 65_432,
 			input: ["text"],
 			reasoning: true,
+			toggle: false,
 			name: "From Config",
 			source: "config",
 		});
@@ -142,6 +143,7 @@ describe("mergeZenCapabilities", () => {
 	it("neither: zen defaults, reasoning on, source default", () => {
 		const merged = mergeZenCapabilities(undefined, undefined);
 		expect(merged).toEqual({ ...ZEN_DEFAULTS, source: "default" });
+
 	});
 
 	it("non text/image modalities are dropped; empty falls back to text", () => {

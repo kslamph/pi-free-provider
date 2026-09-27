@@ -24,7 +24,7 @@ export const CLINE_BASE_URL = "https://api.cline.bot/api/v1";
 export interface ProviderModel {
 	id: string;
 	name: string;
-	api: "openai-completions";
+	api: "openai-completions" | "openai-responses";
 	baseUrl: string;
 	reasoning: boolean;
 	thinkingLevelMap: Record<string, string | null>;
@@ -62,12 +62,17 @@ export function displayName(id: string, caps: ModelCapabilities, feedName: strin
 	return id;
 }
 
-export function toProviderModel(id: string, caps: ModelCapabilities, feedName?: string): ProviderModel {
+export function toProviderModel(
+	id: string,
+	caps: ModelCapabilities,
+	feedName?: string,
+	over?: { api?: ProviderModel["api"]; baseUrl?: string },
+): ProviderModel {
 	return {
 		id,
 		name: displayName(id, caps, feedName),
-		api: "openai-completions",
-		baseUrl: CLINE_BASE_URL,
+		api: over?.api ?? "openai-completions",
+		baseUrl: over?.baseUrl ?? CLINE_BASE_URL,
 		reasoning: caps.reasoning,
 		thinkingLevelMap: buildThinkingLevelMap(caps),
 		input: caps.input,

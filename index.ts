@@ -12,16 +12,26 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext, Api } from "@earendil-works/pi-ai";
 import { runDeviceFlow, validateCredential } from "./auth.ts";
 import { BAKED_IN_CONTRACT, type ContractResult } from "./contract.ts";
-import { DEFAULT_CONFIG, loadConfig, readCache, saveConfig, writeCache, type ClinefreeConfig, type Credential } from "./state.ts";
+import { DEFAULT_CONFIG, loadConfig, readCache, saveConfig, writeCache, zenfreeState, type ClinefreeConfig, type Credential } from "./state.ts";
 import { toProviderModel, type ProviderModel } from "./mapping.ts";
-import { type MultiSyncDeps, type RegisteredState, diffModels, syncProviders } from "./registry.ts";
-import { createClinefreeStream, resetConversation } from "./stream.ts";
+import { type DesiredProvider, type MultiSyncDeps, type RegisteredState, diffModels, syncProviders } from "./registry.ts";
+import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation } from "./stream.ts";
+import { createZenSource, type ZenSource } from "./sources/opencode.ts";
+import { BAKED_IN_ZEN_CONTRACT, type ZenContractResult } from "./sources/opencode-contract.ts";
+import type { ZenCapabilities } from "./sources/opencode-config.ts";
+import { validateZenKey } from "./auth.ts";
 import { createClineSource, type ClineSource } from "./sources/cline.ts";
 import type { LineupEntry } from "./sources/types.ts";
-import { maskKey, registerClinefreeCommand } from "./tui.ts";
+import { maskKey, registerClinefreeCommand, registerZenfreeCommand } from "./tui.ts";
+import type { FeedEntry } from "./feeds.ts";
 
 export const PROVIDER_ID = "clinefree";
 export const PROVIDER_NAME = "Cline Free";
+
+export const ZEN_PROVIDER_ID = "zenfree";
+export const ZEN_RES_PROVIDER_ID = "zenfree.res";
+export const ZEN_PROVIDER_NAME = "OpenCode Zen Free";
+export const ZEN_RES_PROVIDER_NAME = "OpenCode Zen Free (Responses)";
 
 /** Minimal pi surface syncOnce needs (tests pass a fake). */
 export interface PiLike {
@@ -117,14 +127,71 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 	return { ...result, warnings };
 }
 
-/** Record the sync result into the cache's state.json (history for /clinefree). */
-function recordSyncResult(added: string[], removed: string[], warnings: string[]): void {
+/** Record the sync result into a store's state.json (history for the /command). */
+function recordSyncResultIn(
+	store: Pick<typeof clinefreeStore, "readCache" | "writeCache">,
+	added: string[],
+	removed: string[],
+	warnings: string[],
+): void {
 	try {
-		const state = readCache<{ version: 1; lastResult?: { added: string[]; removed: string[]; warnings: string[] }; timestamps?: Record<string, number>; tags?: Record<string, string>; shas?: Record<string, string> }>("state.json") ?? { version: 1, tags: {}, shas: {}, timestamps: {} };
-		writeCache("state.json", { ...state, lastResult: { added, removed, warnings } });
+		const state = store.readCache<{ version: 1; lastResult?: { added: string[]; removed: string[]; warnings: string[] }; timestamps?: Record<string, number>; tags?: Record<string, string>; shas?: Record<string, string> }>("state.json") ?? { version: 1, tags: {}, shas: {}, timestamps: {} };
+		store.writeCache("state.json", { ...state, lastResult: { added, removed, warnings } });
 	} catch {
 		// history is best-effort
 	}
+}
+
+const clinefreeStore = { readCache, writeCache };
+
+/** Zen history lives in the zenfree store, not the clinefree one. */
+function recordZenSyncResult(added: string[], removed: string[], warnings: string[]): void {
+	recordSyncResultIn(zenfreeState, added, removed, warnings);
+}
+
+export interface ZenTargetOpts {
+	lineup: { id: string; name?: string }[];
+	resolve(id: string): ZenCapabilities;
+	resolveTransport(id: string): "openai-completions" | "openai-responses";
+	contract: ZenContractResult;
+	extraHeaders?: Record<string, string>;
+	streamSimple: (model: never, context: never, options?: never) => unknown;
+	registerProvider(id: string, config: unknown): void;
+}
+
+/**
+ * Split the zen lineup by transport into syncProviders targets: chat
+ * completions under `zenfree`, OpenAI Responses under `zenfree.res`
+ * (pi only dispatches a custom streamSimple on an api match).
+ */
+export function buildZenTargets(opts: ZenTargetOpts): DesiredProvider[] {
+	type Group = { providerId: string; api: "openai-completions" | "openai-responses"; models: ProviderModel[] };
+	const groups = new Map<string, Group>();
+	for (const entry of opts.lineup) {
+		const api = opts.resolveTransport(entry.id);
+		const caps = opts.resolve(entry.id);
+		const model = toProviderModel(entry.id, caps, entry.name, { api, baseUrl: opts.contract.baseUrl });
+		const providerId = api === "openai-responses" ? ZEN_RES_PROVIDER_ID : ZEN_PROVIDER_ID;
+		const group = groups.get(providerId) ?? { providerId, api, models: [] };
+		group.models.push(model);
+		groups.set(providerId, group);
+	}
+	return Array.from(groups.values()).map((group) => ({
+		providerId: group.providerId,
+		models: group.models,
+		register: (models: { id: string }[]) => {
+			opts.registerProvider(group.providerId, {
+				name: group.providerId === ZEN_RES_PROVIDER_ID ? ZEN_RES_PROVIDER_NAME : ZEN_PROVIDER_NAME,
+				baseUrl: opts.contract.baseUrl,
+				// Real credential injected per-request by the custom streamSimple.
+				apiKey: "zenfree-managed",
+				api: group.api,
+				headers: { ...opts.contract.headers, ...opts.extraHeaders },
+				models: models as ProviderModel[],
+				streamSimple: opts.streamSimple,
+			});
+		},
+	}));
 }
 
 export default function clinefree(pi: ExtensionAPI): void {
@@ -195,7 +262,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 	const fullSync = async (force = false): Promise<void> => {
 		currentContract = await source.refreshContract(force);
 		const result = await syncOnce({ ...deps, forceCapabilities: force });
-		recordSyncResult(result.added, result.removed, result.warnings);
+		recordSyncResultIn(clinefreeStore, result.added, result.removed, result.warnings);
 	};
 
 	// Register from cached state up front so models exist during startup (no network).
@@ -233,6 +300,18 @@ export default function clinefree(pi: ExtensionAPI): void {
 		} catch (error) {
 			notify(`clinefree: sync error (${error instanceof Error ? error.message : String(error)}) — models unchanged`);
 		}
+
+		// zenfree: independent sync — a clinefree failure must not touch zen.
+		resetZenConversation(event.reason);
+		if (!zenConfig.auth) {
+			notify("zenfree: no workspace key — run /zenfree to add one");
+			return;
+		}
+		try {
+			await zenSync();
+		} catch (error) {
+			notify(`zenfree: sync error (${error instanceof Error ? error.message : String(error)}) — models unchanged`);
+		}
 	});
 
 	// /clinefree command (status · models · auth · refresh · history).
@@ -246,6 +325,161 @@ export default function clinefree(pi: ExtensionAPI): void {
 		patchLineup(entries);
 		return entries;
 	};
+
+	// ── zenfree (OpenCode Zen) — second source, fully independent failures ──
+
+	let zenConfig: ClinefreeConfig;
+	try {
+		zenConfig = zenfreeState.loadConfig();
+	} catch (error) {
+		console.error(`[zenfree] config load failed: ${error instanceof Error ? error.message : String(error)}`);
+		zenConfig = { ...DEFAULT_CONFIG, sync: { ...DEFAULT_CONFIG.sync } };
+	}
+
+	const zenSource: ZenSource = createZenSource({
+		minIntervalMs: zenConfig.sync.minIntervalMinutes * 60_000,
+	});
+	let zenCurrentContract: ZenContractResult =
+		zenfreeState.readCache<ZenContractResult>("contract.json") ?? BAKED_IN_ZEN_CONTRACT;
+
+	const zenStream = createZenfreeStream({
+		getCredential: () => zenConfig.auth,
+		getContract: () => zenCurrentContract,
+		onInvalidated: () => {
+			zenConfig.auth = undefined;
+			try {
+				zenfreeState.saveConfig(zenConfig);
+			} catch {
+				// best-effort
+			}
+		},
+		onVersionStale: () => {
+			void zenSource
+				.refreshContract(true)
+				.then((contract) => {
+					zenCurrentContract = contract;
+				})
+				.catch(() => {
+					// fail-soft: the baked-in contract stays
+				});
+		},
+		notify,
+	});
+
+	const zenRegistered: RegisteredState = { providerIds: [], modelIds: [] };
+	const zenEngine: MultiSyncDeps = {
+		pi: pi as unknown as PiLike,
+		label: "zenfree",
+		notify,
+		notifyOnChange: zenConfig.sync.notifyOnChange,
+		isCurrentModel: (id) => {
+			try {
+				return getModel?.()?.id === id;
+			} catch {
+				return false;
+			}
+		},
+		registered: zenRegistered,
+	};
+
+	/** Full zen sync: contract → lineup+caps → register via the multi-provider engine. */
+	const zenSync = async (force = false): Promise<void> => {
+		zenCurrentContract = await zenSource.refreshContract(force);
+		const lineup = await zenSource.fetchLineup(zenConfig.auth);
+		const ids = lineup.map((entry) => entry.id);
+		const feeds = await zenSource.refreshCapabilities(ids, force);
+		void feeds;
+		const warnings = [...zenSource.warnings];
+		for (const warning of warnings) notify(warning);
+		zenSource.warnings.length = 0;
+		const targets = buildZenTargets({
+			lineup,
+			resolve: (id) => zenSource.resolveCapabilities(id),
+			resolveTransport: (id) => zenSource.resolveTransport(id),
+			contract: zenCurrentContract,
+			extraHeaders: zenSource.configHeaders(),
+			streamSimple: zenStream as never,
+			registerProvider: (id, config) => (pi as unknown as PiLike).registerProvider(id, config),
+		});
+		const result = syncProviders(zenEngine, targets);
+		recordZenSyncResult(result.added, result.removed, warnings);
+	};
+
+	// Cached fast-path: register from the zenfree cache before any network.
+	if (zenConfig.auth) {
+		const cachedZenLineup = zenfreeState.readCache<{ models: Record<string, { name?: string }> }>("lineup.json");
+		if (cachedZenLineup && Object.keys(cachedZenLineup.models).length > 0) {
+			try {
+				const entries = Object.keys(cachedZenLineup.models).sort().map((id) => ({ id, name: cachedZenLineup.models[id]?.name }));
+				const targets = buildZenTargets({
+					lineup: entries,
+					resolve: (id) => zenSource.resolveCapabilities(id),
+					resolveTransport: (id) => zenSource.resolveTransport(id),
+					contract: zenCurrentContract,
+					extraHeaders: zenSource.configHeaders(),
+					streamSimple: zenStream as never,
+					registerProvider: (id, config) => (pi as unknown as PiLike).registerProvider(id, config),
+				});
+				for (const target of targets) target.register(target.models);
+				zenRegistered.providerIds = targets.map((t) => t.providerId);
+				zenRegistered.modelIds = entries.map((e) => e.id);
+			} catch (error) {
+				console.error(`[zenfree] cached registration failed: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
+	}
+
+	let lastZenLineup: { id: string; name?: string }[] =
+		Object.entries(zenfreeState.readCache<{ models: Record<string, { name?: string }> }>("lineup.json")?.models ?? {})
+			.map(([id, m]) => ({ id, name: m?.name }))
+			.sort((a, b) => a.id.localeCompare(b.id));
+	const originalZenFetchLineup = zenSource.fetchLineup.bind(zenSource);
+	zenSource.fetchLineup = async (credential) => {
+		const entries = await originalZenFetchLineup(credential);
+		lastZenLineup = entries;
+		return entries;
+	};
+
+	registerZenfreeCommand(pi, {
+		refresh: () => zenSync(true),
+		snapshot: () => {
+			const status = zenSource.status();
+			const lineupIds = lastZenLineup.map((e) => e.id);
+			return {
+				contractSource: status.contractSource,
+				timestamps: status.timestamps,
+				cliVersion: zenCurrentContract.versions?.cli,
+				baseUrl: zenCurrentContract.baseUrl,
+				authMode: zenConfig.auth?.mode as "apiKey" | undefined,
+				apiKeyMasked: zenConfig.auth?.apiKey ? maskKey(zenConfig.auth.apiKey) : undefined,
+				minIntervalMinutes: zenConfig.sync.minIntervalMinutes,
+				capabilitiesCoveredCount: (zenfreeState.readCache<{ coveredIds: string[] }>("capabilities.json")?.coveredIds ?? []).filter((id) => lineupIds.includes(id)).length,
+				capabilitiesLineupCount: lineupIds.length,
+				freeCount: lineupIds.length,
+			};
+		},
+		modelRows: () =>
+			lastZenLineup.map((entry) => {
+				const caps = zenSource.resolveCapabilities(entry.id);
+				return { id: entry.id, name: toProviderModel(entry.id, caps, entry.name).name, contextWindow: caps.contextWindow, maxTokens: caps.maxTokens, source: caps.source };
+			}),
+		history: () => zenfreeState.readCache<{ lastResult?: { added: string[]; removed: string[]; warnings: string[] } }>("state.json")?.lastResult,
+		setApiKey: async (key: string) => {
+			const verdict = await validateZenKey(key);
+			if (verdict !== "ok") {
+				return { ok: false, detail: verdict === "rejected" ? "rejected by opencode.ai (401/403)" : "network error — try again" };
+			}
+			zenConfig.auth = { mode: "apiKey", apiKey: key };
+			zenfreeState.saveConfig(zenConfig);
+			void zenSync(true);
+			return { ok: true, detail: "workspace key accepted" };
+		},
+		clearCredential: () => {
+			zenConfig.auth = undefined;
+			zenfreeState.saveConfig(zenConfig);
+		},
+		notify,
+	});
 
 	registerClinefreeCommand(pi, {
 		refresh: () => fullSync(true),

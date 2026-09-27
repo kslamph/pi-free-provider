@@ -39,6 +39,8 @@ export const ZEN_DEFAULTS = {
 	maxTokens: 32_000,
 	input: ["text"] as ("text" | "image")[],
 	reasoning: true,
+	/** Zen free models reason always-on with no effort toggle. */
+	toggle: false,
 } as const;
 
 const PI_INPUT = new Set(["text", "image"]);
@@ -133,6 +135,7 @@ export interface ZenCapabilities {
 	maxTokens: number;
 	input: ("text" | "image")[];
 	reasoning: boolean;
+	toggle: boolean;
 	name?: string;
 	source: "config" | "modelsdev" | "default";
 }
@@ -150,6 +153,7 @@ export function mergeZenCapabilities(config: ZenModelEntry | undefined, dev: Fee
 		maxTokens: config?.limit?.output ?? dev?.maxTokens ?? ZEN_DEFAULTS.maxTokens,
 		input: piInput(config?.input) ?? piInput(dev?.inputModalities) ?? ZEN_DEFAULTS.input,
 		reasoning: ZEN_DEFAULTS.reasoning,
+		toggle: false,
 		...( (config?.name ?? dev?.name) !== undefined ? { name: config?.name ?? dev?.name } : {}),
 		source,
 	};

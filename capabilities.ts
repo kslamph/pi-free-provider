@@ -21,7 +21,7 @@ export interface ModelCapabilities {
 	effortValues?: string[];
 	toggle: boolean;
 	name?: string;
-	source: "openrouter" | "vercel" | "default";
+	source: "openrouter" | "vercel" | "config" | "modelsdev" | "default";
 }
 
 export const DEFAULT_CAPABILITIES: ModelCapabilities = {

@@ -117,3 +117,16 @@ describe("ProviderModel type shape", () => {
 		}
 	});
 });
+
+describe("toProviderModel overrides", () => {
+	it("honors an api + baseUrl override for the responses transport", () => {
+		const caps = { contextWindow: 1000, maxTokens: 500, input: ["text"] as ("text" | "image")[], reasoning: true, toggle: false, source: "default" as const };
+		const model = toProviderModel("muse-spark-1.3-contributor-free", caps, undefined, {
+			api: "openai-responses",
+			baseUrl: "https://opencode.ai/inference/openai/v1",
+		});
+		expect(model.api).toBe("openai-responses");
+		expect(model.baseUrl).toBe("https://opencode.ai/inference/openai/v1");
+		expect(model.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+	});
+});

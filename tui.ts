@@ -30,7 +30,7 @@ export interface ModelRow {
 	name: string;
 	contextWindow: number;
 	maxTokens: number;
-	source: "openrouter" | "vercel" | "default";
+	source: "openrouter" | "vercel" | "config" | "modelsdev" | "default";
 }
 
 export interface TuiDeps {
@@ -95,6 +95,42 @@ export function formatModels(rows: ModelRow[]): string {
 	return rows
 		.map((row) => `${row.id}  ${row.name}  ctx ${fmtTokens(row.contextWindow)} / out ${fmtTokens(row.maxTokens)}  [${row.source}]`)
 		.join("\n");
+}
+
+export interface ZenStatusSnapshot {
+	contractSource: "update-api" | "config" | "baked-in" | "none";
+	timestamps: { version?: number; lineup?: number; capabilities?: number };
+	cliVersion?: string;
+	baseUrl?: string;
+	authMode?: "apiKey";
+	apiKeyMasked?: string;
+	minIntervalMinutes: number;
+	capabilitiesCoveredCount: number;
+	capabilitiesLineupCount: number;
+	freeCount: number;
+}
+
+export function formatZenStatus(s: ZenStatusSnapshot, now = Date.now()): string {
+	const lines: string[] = [];
+	lines.push("zenfree status");
+	if (s.contractSource === "baked-in") {
+		lines.push(`  client: baked-in ⚠ ${s.cliVersion ? `opencode/latest/${s.cliVersion}/cli` : "version unknown"} (update service unreachable — UA may be stale)`);
+	} else if (s.contractSource === "none") {
+		lines.push("  client: none yet (never synced)");
+	} else {
+		lines.push(`  client: opencode/latest/${s.cliVersion ?? "?"}/cli (${s.contractSource}) · next check ${minutesIn(s.timestamps.version, now, s.minIntervalMinutes * 60_000)}`);
+	}
+	lines.push(
+		`  capabilities: ${s.capabilitiesCoveredCount}/${s.capabilitiesLineupCount} models covered (fetched once per model — use Refresh to force)`,
+	);
+	lines.push(`  lineup: synced ${minutesAgo(s.timestamps.lineup, now)} · ${s.freeCount} free models`);
+	if (s.baseUrl) lines.push(`  gateway: ${s.baseUrl}`);
+	if (s.authMode) {
+		lines.push(`  auth: ${s.authMode} (${s.apiKeyMasked ?? "key"})`);
+	} else {
+		lines.push("  auth: none — choose Auth to add a workspace key");
+	}
+	return lines.join("\n");
 }
 
 /** Compact searchable single-select in the better-custom style. */
@@ -223,6 +259,91 @@ export function registerClinefreeCommand(pi: ExtensionAPI, deps: TuiDeps): void 
 						if (await ctx.ui.confirm("Clear credential", "Clear the stored Cline credential?")) {
 							deps.clearCredential();
 							deps.notify("clinefree: credential cleared");
+						}
+					}
+					continue;
+				}
+			}
+		},
+	});
+}
+
+export interface ZenTuiDeps {
+	refresh(): Promise<void>;
+	snapshot(): ZenStatusSnapshot;
+	modelRows(): ModelRow[];
+	history(): { added: string[]; removed: string[]; warnings: string[] } | undefined;
+	setApiKey(key: string): Promise<{ ok: boolean; detail: string }>;
+	clearCredential(): void;
+	notify(message: string): void;
+}
+
+/** /zenfree — status, models, auth (key only), refresh, history. */
+export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void {
+	pi.registerCommand("zenfree", {
+		description: "OpenCode Zen free models: status, models, auth, refresh, history",
+		handler: async (_args, ctx) => {
+			for (;;) {
+				const choice = await selectOne(ctx, "zenfree", [
+					{ value: "status", label: "Status" },
+					{ value: "models", label: "Models" },
+					{ value: "auth", label: "Auth" },
+					{ value: "refresh", label: "Refresh now" },
+					{ value: "history", label: "History" },
+					{ value: "back", label: "Back" },
+				]);
+				if (choice === null || choice === "back") return;
+
+				if (choice === "status") {
+					await infoPanel(ctx, "status", formatZenStatus(deps.snapshot()));
+					continue;
+				}
+				if (choice === "models") {
+					await infoPanel(ctx, "models", formatModels(deps.modelRows()));
+					continue;
+				}
+				if (choice === "history") {
+					const h = deps.history();
+					await infoPanel(
+						ctx,
+						"sync history (last sync)",
+						h
+							? [
+									`added: ${h.added.length > 0 ? h.added.join(", ") : "—"}`,
+									`removed: ${h.removed.length > 0 ? h.removed.join(", ") : "—"}`,
+									`warnings: ${h.warnings.length > 0 ? h.warnings.join(" | ") : "—"}`,
+								].join("\n")
+							: "no sync recorded yet",
+					);
+					continue;
+				}
+				if (choice === "refresh") {
+					try {
+						await deps.refresh();
+						const h = deps.history();
+						deps.notify(
+							`zenfree: refreshed — ${h ? `+${h.added.length}/−${h.removed.length}` : "sync complete"}`,
+						);
+					} catch (error) {
+						deps.notify(`zenfree: refresh failed — ${error instanceof Error ? error.message : String(error)}`);
+					}
+					continue;
+				}
+				if (choice === "auth") {
+					const authChoice = await selectOne(ctx, "auth", [
+						{ value: "apikey", label: "Paste workspace key" },
+						{ value: "clear", label: "Clear key" },
+						{ value: "back", label: "Back" },
+					]);
+					if (authChoice === "apikey") {
+						const key = (await ctx.ui.input("OpenCode workspace key", "oc_sk_…"))?.trim();
+						if (!key) continue;
+						const result = await deps.setApiKey(key);
+						deps.notify(result.ok ? `zenfree: key accepted (${result.detail})` : `zenfree: key rejected — ${result.detail}`);
+					} else if (authChoice === "clear") {
+						if (await ctx.ui.confirm("Clear key", "Forget the stored OpenCode workspace key?")) {
+							deps.clearCredential();
+							deps.notify("zenfree: key cleared");
 						}
 					}
 					continue;
