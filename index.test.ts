@@ -86,8 +86,23 @@ describe("zen bootstrap", () => {
 		});
 		targets.forEach((t) => t.register(t.models));
 		const model = (registered[0]!.config as { models: { compat?: unknown; thinkingLevelMap: Record<string, string | null> }[] }).models[0]!;
-		expect(model.compat).toBeUndefined();
+		expect(model.compat).not.toHaveProperty("thinkingFormat");
 		expect(model.thinkingLevelMap.minimal).toBe("minimal");
+	});
+
+	it("zen models pin the official client's max_tokens field", () => {
+		const { caps, registered, registerProvider } = zenPieces();
+		const targets = buildZenTargets({
+			lineup: [{ id: "big-pickle", name: "Big Pickle" }],
+			resolve: () => caps,
+			resolveTransport: () => "openai-completions",
+			contract: BAKED_IN_ZEN_CONTRACT,
+			streamSimple: (() => ({})) as never,
+			registerProvider,
+		});
+		targets.forEach((t) => t.register(t.models));
+		const model = (registered[0]!.config as { models: { compat?: Record<string, unknown> }[] }).models[0]!;
+		expect(model.compat).toEqual({ maxTokensField: "max_tokens" });
 	});
 
 	it("yields no targets for an empty lineup", () => {

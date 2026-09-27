@@ -145,4 +145,14 @@ describe("toProviderModel overrides", () => {
 		const cline = toProviderModel("cline-free/x", active, undefined, {});
 		expect(cline.compat).toEqual({ thinkingFormat: "openrouter" });
 	});
+
+	it("maxTokensField override lands in compat without disturbing the thinking format", () => {
+		const active = caps({ effortValues: ["low", "high"] });
+		const zen = toProviderModel("big-pickle", active, undefined, { thinkingFormat: "openai", maxTokensField: "max_tokens" });
+		expect(zen.compat).toEqual({ maxTokensField: "max_tokens" });
+		const cline = toProviderModel("cline-free/x", active, undefined, { maxTokensField: "max_tokens" });
+		expect(cline.compat).toEqual({ thinkingFormat: "openrouter", maxTokensField: "max_tokens" });
+		const defaultNoOverride = toProviderModel("cline-free/y", active, undefined, {});
+		expect(defaultNoOverride.compat).toEqual({ thinkingFormat: "openrouter" });
+	});
 });

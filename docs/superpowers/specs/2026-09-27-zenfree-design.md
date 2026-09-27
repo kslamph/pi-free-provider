@@ -89,6 +89,14 @@ or unreachable registry → baked-in UA + warning; nothing blocks.
      big-pickle and muse-spark), so an `off` level must mean *send no parameter*: the empty-map
      models get that for free, and advertised-toggle models (ling/longcat, which do accept
      `none`) keep `off → "none"` + `high`. Advertised effort values all pass on both transports.
+  5. **Output-cap field (official-client parity)**: models.dev routes the whole zen provider
+     through `@ai-sdk/openai-compatible`, whose builder serializes the cap as `max_tokens` —
+     `max_completion_tokens` appears nowhere in that package. pi-ai's detected default is the
+     latter, so zen models pin `compat.maxTokensField: "max_tokens"` (pi's built-in opencode
+     catalog and the gateway's own 400-on-over-cap check agree). `zen-wire.test.ts` runs the
+     real pi-ai builder and asserts the serialized body. Clinefree keeps pi's default: the
+     Cline client sends the nested `reasoning.effort` (verified live) and no source says
+     otherwise, so its `max_completion_tokens` stays as verified.
   Cost is always `{ input: 0, output: 0 }` (free). Source recorded as
   `"opencode" | "modelsdev" | "default"` for status display.
 - **Transport assignment** (live-verified 2026-09-27): `package === "aisdk:@ai-sdk/openai"` ⇒

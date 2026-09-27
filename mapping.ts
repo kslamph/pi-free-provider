@@ -13,6 +13,8 @@
  *  - A toggle-only model exposes off + high.
  *  - compat.thinkingFormat is "openrouter" iff effort values exist and the
  *    caller did not override the wire format (zen uses flat reasoning_effort).
+ *  - compat.maxTokensField is present only when the caller overrides it (zen
+ *    pins `max_tokens`, the field the official OpenCode client serializes).
  */
 
 import type { ModelCapabilities } from "./capabilities.ts";
@@ -79,9 +81,16 @@ export function toProviderModel(
 		 *  `reasoning.effort`); zen's gateway takes the flat OpenAI
 		 *  `reasoning_effort`, so it passes "openai" (no compat flag). */
 		thinkingFormat?: "openrouter" | "openai";
+		/** Output-cap field name. pi-ai defaults to `max_completion_tokens`;
+		 *  zen passes "max_tokens" to match the official OpenCode client
+		 *  (`@ai-sdk/openai-compatible` only ever serializes `max_tokens`). */
+		maxTokensField?: "max_tokens" | "max_completion_tokens";
 	},
 ): ProviderModel {
 	const thinkingFormat = over?.thinkingFormat ?? "openrouter";
+	const compat: Record<string, unknown> = {};
+	if (thinkingFormat === "openrouter" && (caps.effortValues?.length ?? 0) > 0) compat.thinkingFormat = "openrouter";
+	if (over?.maxTokensField) compat.maxTokensField = over.maxTokensField;
 	return {
 		id,
 		name: displayName(id, caps, feedName),
@@ -93,6 +102,6 @@ export function toProviderModel(
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: caps.contextWindow,
 		maxTokens: caps.maxTokens,
-		...((thinkingFormat === "openrouter" && (caps.effortValues?.length ?? 0) > 0) ? { compat: { thinkingFormat: "openrouter" } } : {}),
+		...((Object.keys(compat).length > 0) ? { compat } : {}),
 	};
 }
