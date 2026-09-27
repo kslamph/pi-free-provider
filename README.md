@@ -84,3 +84,30 @@ CLINEFREE_SMOKE_KEY=sk-… node --experimental-strip-types smoke.ts   # live smo
 
 `/clinefree` also shows the resolved contract tags, feed freshness, the
 credential (masked), the account email, and the last add/remove diff.
+
+## zenfree — OpenCode Zen free models (second source)
+
+`zenfree` adds OpenCode Zen's free tier as a second, fully independent source:
+
+- **Providers**: `zenfree/*` (openai-completions) and `zenfree.res/*` (openai-responses — e.g.
+  muse-spark). One provider per transport because pi dispatches a custom `streamSimple` only on an
+  api match; both share the same workspace key.
+- **Auth**: pasted workspace key from opencode.ai/auth → workspace Keys. Stored in
+  `~/.pi/agent/zenfree.json` (0600); cache under `~/.pi/agent/zenfree/cache/` (env
+  `ZENFREE_CONFIG`/`ZENFREE_CACHE`).
+- **Lineup + capabilities**: console `GET /api/v2/config` is authoritative — free = every cost
+  tier `input == 0`; limits/input come from the same response, gaps filled from models.dev
+  `opencode` (fetched once per model id, `Refresh` forces), then zen defaults (200K/32K,
+  reasoning on). Delisted models drop immediately.
+- **Client contract**: `User-Agent opencode/latest/<ver>/cli` from the official update service
+  (`opencode.ai/update/api/latest/cli`), `x-opencode-client: cli`, plus per-conversation
+  `x-opencode-session` and per-turn `x-opencode-request` ids (the gateway 403-rejects requests
+  without them). The gateway prescribes `x-opencode-org-id` via the config; it is attached
+  automatically.
+- **Sync**: every `session_start`; `/zenfree` → Status · Models · Auth · Refresh · History.
+
+Live smoke for both sources (keys via env, never committed):
+
+```
+CLINEFREE_SMOKE_KEY=sk-… ZENFREE_SMOKE_KEY=oc_sk_… node --experimental-strip-types smoke.ts
+```
