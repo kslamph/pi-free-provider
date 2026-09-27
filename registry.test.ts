@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { diffModels } from "./registry.ts";
 import { syncOnce, type PiLike, type SyncDeps } from "./index.ts";
+import { syncProviders } from "./registry.ts";
 import { BAKED_IN_CONTRACT } from "./contract.ts";
 import { DEFAULT_CAPABILITIES } from "./capabilities.ts";
 import type { LineupEntry } from "./sources/types.ts";
@@ -34,6 +35,7 @@ function fakeSource(lineup: LineupEntry[], warnings: string[] = []) {
 	return {
 		warnings,
 		fetchLineup: vi.fn(async () => lineup),
+		refreshCapabilities: vi.fn(async () => ({ openrouter: {}, vercel: {} })),
 		resolveCapabilities: vi.fn((id: string) => capsFor.get(id) ?? DEFAULT_CAPABILITIES),
 		setCaps: (id: string, caps: typeof DEFAULT_CAPABILITIES & { source: string }) => capsFor.set(id, caps),
 	};
@@ -46,7 +48,7 @@ function makeDeps(pi: PiLike, source: ReturnType<typeof fakeSource>, extra: Part
 		getContract: () => BAKED_IN_CONTRACT,
 		streamSimple: (() => ({})) as never,
 		notify: vi.fn(),
-		config: { auth: { mode: "apiKey", apiKey: "sk-x" }, sync: { minIntervalMinutes: 30, capabilityTtlMinutes: 10, notifyOnChange: true } },
+		config: { auth: { mode: "apiKey", apiKey: "sk-x" }, sync: { minIntervalMinutes: 30, notifyOnChange: true } },
 		registeredIds: [],
 		isCurrentModel: () => false,
 		...extra,
@@ -155,9 +157,93 @@ describe("syncOnce", () => {
 
 	it("skips registration entirely when no credential is configured", async () => {
 		const { pi, registered } = fakePi();
-		const deps = makeDeps(pi, fakeSource(LINEUP), { config: { auth: undefined, sync: { minIntervalMinutes: 30, capabilityTtlMinutes: 10, notifyOnChange: true } } });
+		const deps = makeDeps(pi, fakeSource(LINEUP), { config: { auth: undefined, sync: { minIntervalMinutes: 30, notifyOnChange: true } } });
 		const result = await syncOnce(deps);
 		expect(result).toEqual({ added: [], removed: [] });
 		expect(registered).toEqual([]);
+	});
+});
+
+describe("syncProviders (multi-provider engine)", () => {
+	function multiDeps(extra: Partial<Parameters<typeof syncProviders>[0]> = {}) {
+		const registered = { providerIds: [] as string[], modelIds: [] as string[] };
+		const pi: PiLike = {
+			registerProvider: (id, config) => calls.push({ id, config: config as Record<string, unknown> }),
+			unregisterProvider: (id) => unregistered.push(id),
+		};
+		const calls: { id: string; config: Record<string, unknown> }[] = [];
+		const unregistered: string[] = [];
+		const deps = {
+			pi,
+			label: "zenfree",
+			notify: vi.fn(),
+			notifyOnChange: true,
+			isCurrentModel: (_id: string) => false,
+			registered,
+			...extra,
+		};
+		const target = (providerId: string, ids: string[]) => ({
+			providerId,
+			models: ids.map((id) => ({ id })),
+			register: (models: { id: string }[]) =>
+				pi.registerProvider(providerId, { name: providerId, api: providerId === "zenfree.res" ? "openai-responses" : "openai-completions", models }),
+		});
+		return { deps, calls, unregistered, registered, target };
+	}
+
+	it("splits the desired lineup across two providers by transport", async () => {
+		const { deps, calls, registered } = multiDeps();
+		const result = await syncProviders(deps, [
+			deps === null ? null! : { providerId: "zenfree", models: [{ id: "big-pickle" }, { id: "mimo-v2.6-flash-free" }], register: (m) => deps.pi.registerProvider("zenfree", { api: "openai-completions", models: m }) },
+			{ providerId: "zenfree.res", models: [{ id: "muse-spark-1.3-contributor-free" }], register: (m) => deps.pi.registerProvider("zenfree.res", { api: "openai-responses", models: m }) },
+		]);
+		expect(result).toEqual({ added: ["big-pickle", "mimo-v2.6-flash-free", "muse-spark-1.3-contributor-free"], removed: [] });
+		expect(calls.map((c) => c.id)).toEqual(["zenfree", "zenfree.res"]);
+		expect((calls[1]!.config as { api: string }).api).toBe("openai-responses");
+		expect(registered.providerIds).toEqual(["zenfree", "zenfree.res"]);
+		expect(registered.modelIds).toEqual(["big-pickle", "mimo-v2.6-flash-free", "muse-spark-1.3-contributor-free"]);
+	});
+
+	it("moves a model between providers and drops the stale provider when it empties", async () => {
+		const { deps, calls, unregistered, registered } = multiDeps();
+		const register = (providerId: string) => (m: { id: string }[]) => deps.pi.registerProvider(providerId, { models: m });
+		await syncProviders(deps, [
+			{ providerId: "zenfree", models: [{ id: "muse-spark" }], register: register("zenfree") },
+			{ providerId: "zenfree.res", models: [{ id: "other-res" }], register: register("zenfree.res") },
+		]);
+		const result = await syncProviders(deps, [{ providerId: "zenfree", models: [{ id: "muse-spark" }, { id: "other-res" }], register: register("zenfree") }]);
+		expect(result).toEqual({ added: [], removed: [] });
+		expect(unregistered).toEqual(["zenfree.res"]);
+		expect(registered.providerIds).toEqual(["zenfree"]);
+		expect(calls.at(-1)?.id).toBe("zenfree");
+	});
+
+	it("unregisters every provider and prompts a switch when the free lineup empties", async () => {
+		const { deps, unregistered, registered } = multiDeps({ isCurrentModel: (id) => id === "mimo-v2.6-flash-free" });
+		const register = (providerId: string) => (m: { id: string }[]) => deps.pi.registerProvider(providerId, { models: m });
+		await syncProviders(deps, [
+			{ providerId: "zenfree", models: [{ id: "mimo-v2.6-flash-free" }], register: register("zenfree") },
+			{ providerId: "zenfree.res", models: [{ id: "muse-spark" }], register: register("zenfree.res") },
+		]);
+		deps.notify.mockClear();
+		await syncProviders(deps, []);
+		expect(unregistered.sort()).toEqual(["zenfree", "zenfree.res"]);
+		expect(registered.providerIds).toEqual([]);
+		expect(registered.modelIds).toEqual([]);
+		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("free lineup is empty"));
+		expect(deps.notify).toHaveBeenCalledWith(expect.stringMatching(/mimo-v2\.6-flash-free.*switch|switch.*mimo-v2\.6-flash-free/i));
+	});
+
+	it("notifies the aggregate diff across providers once", async () => {
+		const { deps } = multiDeps();
+		const register = (providerId: string) => (m: { id: string }[]) => deps.pi.registerProvider(providerId, { models: m });
+		await syncProviders(deps, [{ providerId: "zenfree", models: [{ id: "big-pickle" }], register: register("zenfree") }]);
+		deps.notify.mockClear();
+		await syncProviders(deps, [
+			{ providerId: "zenfree", models: [{ id: "big-pickle" }, { id: "space-bunny-free" }], register: register("zenfree") },
+			{ providerId: "zenfree.res", models: [{ id: "muse-spark" }], register: register("zenfree.res") },
+		]);
+		expect(deps.notify).toHaveBeenCalledTimes(1);
+		expect(deps.notify).toHaveBeenCalledWith("zenfree: +2 new: space-bunny-free, muse-spark");
 	});
 });

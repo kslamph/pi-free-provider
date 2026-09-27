@@ -14,7 +14,7 @@ import { runDeviceFlow, validateCredential } from "./auth.ts";
 import { BAKED_IN_CONTRACT, type ContractResult } from "./contract.ts";
 import { DEFAULT_CONFIG, loadConfig, readCache, saveConfig, writeCache, type ClinefreeConfig, type Credential } from "./state.ts";
 import { toProviderModel, type ProviderModel } from "./mapping.ts";
-import { diffModels } from "./registry.ts";
+import { type MultiSyncDeps, type RegisteredState, diffModels, syncProviders } from "./registry.ts";
 import { createClinefreeStream, resetConversation } from "./stream.ts";
 import { createClineSource, type ClineSource } from "./sources/cline.ts";
 import type { LineupEntry } from "./sources/types.ts";
@@ -32,19 +32,24 @@ export interface PiLike {
 export interface SyncDeps {
 	pi: PiLike;
 	/** Free-model source (lineup + capabilities + warnings). */
-	source: ClineSource | (Pick<ClineSource, "fetchLineup" | "resolveCapabilities"> & { warnings: string[] });
+	source: ClineSource | (Pick<ClineSource, "fetchLineup" | "resolveCapabilities" | "refreshCapabilities"> & { warnings: string[] });
 	getContract(): ContractResult;
 	streamSimple: (model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	notify(message: string): void;
 	config: ClinefreeConfig;
 	/** Mutated in place — the caller's record of what is registered. */
 	registeredIds: string[];
+	/** Provider ids currently registered (managed by syncOnce; one entry today). */
+	providerIds?: string[];
 	/** True when `id` is pi's currently selected model. */
 	isCurrentModel(id: string): boolean;
+	/** Force a capability re-fetch even for already-covered ids (manual refresh). */
+	forceCapabilities?: boolean;
 }
 
 /**
- * One sync pass: lineup → capabilities → map → diff → re-register.
+ * One sync pass: lineup → capabilities (fetched only for ids never covered
+ * before, unless `forceCapabilities`) → map → diff → re-register.
  * Never throws: a failing source keeps the previous registration.
  */
 export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; removed: string[] }> {
@@ -59,60 +64,38 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 		return { added: [], removed: [] };
 	}
 
-	// Surface collected warnings once per sync, then clear them.
-	for (const warning of [...deps.source.warnings]) deps.notify(warning);
-	deps.source.warnings.length = 0;
-
-	const desired = lineup.map((entry) => entry.id);
-	const { added, removed } = diffModels(deps.registeredIds, desired);
-
-	if (desired.length === 0) {
-		if (deps.registeredIds.length > 0) {
-			const delistedActive = deps.registeredIds.find((id) => deps.isCurrentModel(id));
-			try {
-				deps.pi.unregisterProvider(PROVIDER_ID);
-			} catch {
-				// already gone
-			}
-			deps.registeredIds.length = 0;
-			deps.notify("clinefree: free lineup is empty — provider unregistered");
-			if (delistedActive) {
-				deps.notify(`clinefree: active model ${delistedActive} was delisted and the free lineup is now empty — switch models to keep working`);
-			}
-		}
-		return { added, removed };
-	}
-
 	const models: ProviderModel[] = lineup.map((entry) =>
 		toProviderModel(entry.id, deps.source.resolveCapabilities(entry.id), entry.name),
 	);
 	const contract = deps.getContract();
-	deps.pi.registerProvider(PROVIDER_ID, {
-		name: PROVIDER_NAME,
-		baseUrl: "https://api.cline.bot/api/v1",
-		// Real credential injected per-request by the custom streamSimple.
-		apiKey: "clinefree-managed",
-		api: "openai-completions",
-		headers: contract.headers,
-		models,
-		streamSimple: deps.streamSimple,
-	});
-	deps.registeredIds.splice(0, deps.registeredIds.length, ...desired);
-
-	if (added.length > 0 || removed.length > 0) {
-		if (deps.config.sync.notifyOnChange) {
-			const parts: string[] = [];
-			if (added.length > 0) parts.push(`+${added.length} new: ${added.join(", ")}`);
-			if (removed.length > 0) parts.push(`−${removed.length} delisted: ${removed.join(", ")}`);
-			deps.notify(`clinefree: ${parts.join(" · ")}`);
-		}
-		const delistedActive = removed.find((id) => deps.isCurrentModel(id));
-		if (delistedActive) {
-			deps.notify(`clinefree: active model ${delistedActive} was delisted — switch models (e.g. /model clinefree/${added[0] ?? desired[0]}) to keep working`);
-		}
-	}
-
-	return { added, removed };
+	const providerIds = (deps.providerIds ??= []);
+	const engine: MultiSyncDeps = {
+		pi: deps.pi,
+		label: "clinefree",
+		notify: deps.notify,
+		notifyOnChange: deps.config.sync.notifyOnChange,
+		isCurrentModel: deps.isCurrentModel,
+		registered: { providerIds, modelIds: deps.registeredIds },
+	};
+	if (models.length === 0) return syncProviders(engine, []);
+	return syncProviders(engine, [
+		{
+			providerId: PROVIDER_ID,
+			models,
+			register: (toRegister) => {
+				deps.pi.registerProvider(PROVIDER_ID, {
+					name: PROVIDER_NAME,
+					baseUrl: "https://api.cline.bot/api/v1",
+					// Real credential injected per-request by the custom streamSimple.
+					apiKey: "clinefree-managed",
+					api: "openai-completions",
+					headers: contract.headers,
+					models: toRegister as ProviderModel[],
+					streamSimple: deps.streamSimple,
+				});
+			},
+		},
+	]);
 }
 
 /** Record the sync result into the cache's state.json (history for /clinefree). */
@@ -190,12 +173,11 @@ export default function clinefree(pi: ExtensionAPI): void {
 		},
 	};
 
-	/** Full sync: contract (TTL-gated) → capabilities (TTL-gated) → lineup+register. */
-	const fullSync = async (): Promise<void> => {
-		currentContract = await source.refreshContract();
-		await source.refreshCapabilities();
+	/** Full sync: contract (TTL-gated) → lineup+capabilities+register. `force` bypasses the tag-interval and re-fetches capabilities even for already-covered ids. */
+	const fullSync = async (force = false): Promise<void> => {
+		currentContract = await source.refreshContract(force);
 		const before = [...source.warnings];
-		const result = await syncOnce(deps);
+		const result = await syncOnce({ ...deps, forceCapabilities: force });
 		recordSyncResult(result.added, result.removed, before);
 	};
 
@@ -249,7 +231,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 	};
 
 	registerClinefreeCommand(pi, {
-		refresh: fullSync,
+		refresh: () => fullSync(true),
 		snapshot: () => {
 			const status = source.status();
 			return {
@@ -260,7 +242,8 @@ export default function clinefree(pi: ExtensionAPI): void {
 				apiKeyMasked: config.auth?.apiKey ? maskKey(config.auth.apiKey) : undefined,
 				accountEmail: config.auth?.account?.email,
 				minIntervalMinutes: config.sync.minIntervalMinutes,
-				capabilityTtlMinutes: config.sync.capabilityTtlMinutes,
+				capabilitiesCoveredCount: status.capabilitiesCoveredIds.length,
+				capabilitiesLineupCount: lastLineup.length,
 			};
 		},
 		modelRows: () =>
