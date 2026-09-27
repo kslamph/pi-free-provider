@@ -1,0 +1,82 @@
+# pi-oc-cline
+
+A pi extension that exposes **Cline's free models** as one auto-synced provider.
+
+The free lineup on `api.cline.bot` rotates constantly — new models appear, old
+ones are delisted. This extension keeps itself in sync so you never hand-edit
+model definitions again:
+
+- **Lineup** — `GET /api/v1/ai/cline/recommended-models` (`free[]` only), fetched
+  live on every session start. New models are added automatically; delisted
+  models are dropped immediately.
+- **Capabilities** — resolved per model from two live feeds, in order:
+  1. **models.dev** (`openrouter` block) — the canonical source Cline's runtime
+     uses, with structured reasoning options,
+  2. **Vercel AI Gateway** (`ai-gateway.vercel.sh/v1/models`) — the only place
+     Vercel-only stealth ids (e.g. `stealth/pixel-canary`) exist,
+  3. otherwise **fixed defaults**: 256K context / 32K output / text-only.
+- **Contract** — the header set and endpoint path Cline's official CLI sends,
+  extracted from the [cline/cline](https://github.com/cline/cline) repo at the
+  latest release tags (`cli-v*`, `sdk/core/v*`, `sdk/llms/v*`). If extraction
+  fails, a baked-in snapshot is used and you are warned — startup never blocks.
+
+## Install
+
+```bash
+pi install /path/to/pi-oc-cline
+```
+
+## Sign in
+
+```
+/clinefree → Auth
+```
+
+Two modes, both sent as `Authorization: Bearer …`:
+
+- **Paste API key** — a Cline API key (`sk-…`), validated against
+  `GET /api/v1/users/me` (no model quota consumed).
+- **Sign in with Cline (device flow)** — WorkOS device authorization, tokens
+  refreshed and rotated automatically.
+
+## Models
+
+Everything is exposed as `clinefree/<feed id>`, e.g.
+`clinefree/cline-free/deepseek-v4.1-flash`. All models are zero-cost with a
+daily per-account, per-model quota. `/clinefree → Models` lists the current
+lineup with each model's context, output cap, and where its capabilities came
+from (`openrouter` / `vercel` / `default`).
+
+## Sync behaviour
+
+| What | When |
+|---|---|
+| live lineup | every session start (`/clinefree refresh` to force) |
+| capability feeds | when older than 10 minutes |
+| contract tags | when older than 30 minutes; files re-downloaded only when a tag changed |
+
+Everything fails soft: an unreachable feed falls back to the last-known-good
+cache, then to defaults, with a warning — never a broken startup.
+
+## Files
+
+| Path | Purpose |
+|---|---|
+| `~/.pi/agent/clinefree.json` | config incl. credential (mode 0600) |
+| `~/.pi/agent/clinefree/cache/` | contract / lineup / capabilities / sync history |
+
+Env overrides: `CLINEFREE_CONFIG`, `CLINEFREE_CACHE`.
+
+## Development
+
+```bash
+npm install
+npm test          # vitest, no network — all external calls are injectable
+npm run typecheck
+CLINEFREE_SMOKE_KEY=sk-… node --experimental-strip-types smoke.ts   # live smoke, never in CI
+```
+
+## Status / history
+
+`/clinefree` also shows the resolved contract tags, feed freshness, the
+credential (masked), the account email, and the last add/remove diff.

@@ -125,25 +125,25 @@
       "id": "11",
       "subject": "Task 11: tui.ts — /clinefree command",
       "description": "registerClinefreeCommand: Status/Models/Auth/Refresh/History menu; tested formatStatus (tags, TTLs, baked-in warning, masked credential, account) and formatModels (id, name, ctx/out, capability source). Commit feat: /clinefree command.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing tui.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624826,
-      "updatedAt": 1790516727442
+      "updatedAt": 1790516958941
     },
     {
       "id": "12",
       "subject": "Task 12: smoke.ts + README + final verification",
       "description": "smoke.ts (CLINEFREE_SMOKE_KEY: users/me → lineup → feeds → capabilities table → 1-token chat; refuses without env), README, full typecheck+tests, import test. Commit feat: live smoke + readme. Then run smoke with dev key manually.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Writing smoke + README",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624826,
-      "updatedAt": 1790515624826
+      "updatedAt": 1790516958941
     }
   ]
 }
