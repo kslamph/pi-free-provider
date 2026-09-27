@@ -12,5 +12,6 @@
 		"noEmit": true,
 		"skipLibCheck": true
 	},
-	"include": ["*.ts", "sources/**/*.ts", "test-fixtures/**/*.ts"]
+	"include": ["*.ts", "sources/**/*.ts"],
+	"exclude": ["test-fixtures", "node_modules"]
 }
