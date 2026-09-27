@@ -1,0 +1,201 @@
+/**
+ * The Cline FreeModelSource (spec §4–§6):
+ *  - contract: GitHub at the latest per-artifact release tags, TTL-gated by a
+ *    min interval; baked-in fallback with a warning when unreachable.
+ *  - lineup: live recommended-models `free[]` (unauthenticated), contract
+ *    headers attached; last-known-good cache on failure.
+ *  - capabilities: models.dev openrouter + Vercel AI Gateway feeds, TTL-gated
+ *    (default 10 minutes, mirroring Cline's own catalog TTL).
+ *
+ * Every network path is fail-soft: nothing here throws outward.
+ */
+
+import { BAKED_IN_CONTRACT, extractContract, type ContractResult } from "../contract.ts";
+import { resolveCapabilities } from "../capabilities.ts";
+import { fetchModelsDevOpenRouter, fetchVercelGateway, type FeedEntry } from "../feeds.ts";
+import { fetchRawAtSha, resolveLatestTag, TAG_PREFIXES } from "../github.ts";
+import { readCache as defaultReadCache, writeCache as defaultWriteCache } from "../state.ts";
+import type { FreeModelSource, LineupEntry } from "./types.ts";
+
+const CLINE_API_BASE = "https://api.cline.bot";
+const DEFAULT_MIN_INTERVAL_MS = 30 * 60_000;
+const DEFAULT_CAPABILITY_TTL_MS = 10 * 60_000;
+
+const CONTRACT_FILES = {
+	requestHeaders: "sdk/packages/llms/src/providers/request-headers.ts",
+	clientHeaders: "sdk/packages/llms/src/providers/cline-client-headers.ts",
+	recommended: "sdk/packages/llms/src/catalog/catalog-cline-recommended.ts",
+} as const;
+
+export interface SyncState {
+	version: 1;
+	tags: { llms?: string; core?: string; cli?: string };
+	shas: { llms?: string; core?: string; cli?: string };
+	timestamps: { tags?: number; contract?: number; capabilities?: number; lineup?: number };
+	lastResult?: { added: string[]; removed: string[]; warnings: string[] };
+}
+
+export interface ClineSourceDeps {
+	fetcher?: typeof fetch;
+	now?: () => number;
+	readCache?: <T>(name: string) => T | undefined;
+	writeCache?: (name: string, data: unknown) => void;
+	minIntervalMs?: number;
+	capabilityTtlMs?: number;
+}
+
+export interface ClineSource extends FreeModelSource {
+	/** Warnings collected by the most recent refresh calls (surfaced once per sync). */
+	warnings: string[];
+	/** Status snapshot for /clinefree. */
+	status(): {
+		tags: SyncState["tags"];
+		timestamps: SyncState["timestamps"];
+		contractSource: "github" | "baked-in" | "none";
+	};
+}
+
+const EMPTY_STATE: SyncState = { version: 1, tags: {}, shas: {}, timestamps: {} };
+
+interface CachedCapabilities {
+	openrouter: Record<string, FeedEntry>;
+	vercel: Record<string, FeedEntry>;
+	updatedAt: number;
+}
+
+/** `cli-v3.0.65` → `3.0.65`; `sdk/llms/v0.0.86` → `0.0.86`. */
+function versionOfTag(tag: string): string {
+	const idx = tag.lastIndexOf("v");
+	return idx >= 0 ? tag.slice(idx + 1) : tag;
+}
+
+export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
+	const fetcher = deps.fetcher ?? fetch;
+	const now = deps.now ?? Date.now;
+	const readCache = deps.readCache ?? defaultReadCache;
+	const writeCache = deps.writeCache ?? defaultWriteCache;
+	const minIntervalMs = deps.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
+	const capabilityTtlMs = deps.capabilityTtlMs ?? DEFAULT_CAPABILITY_TTL_MS;
+
+	const warnings: string[] = [];
+	let feeds: { openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> } | undefined;
+
+	const readState = (): SyncState => readCache<SyncState>("state.json") ?? { ...EMPTY_STATE, tags: {}, shas: {}, timestamps: {} };
+	const writeState = (state: SyncState) => writeCache("state.json", state);
+
+	const cachedContract = (): ContractResult | undefined => readCache<ContractResult>("contract.json");
+
+	async function refreshContract(force = false): Promise<ContractResult> {
+		const state = readState();
+		const lastCheck = state.timestamps.tags ?? 0;
+		if (!force && lastCheck > 0 && now() - lastCheck < minIntervalMs) {
+			return cachedContract() ?? BAKED_IN_CONTRACT;
+		}
+
+		let tags: SyncState["tags"];
+		let shas: SyncState["shas"];
+		try {
+			const [llms, core, cli] = await Promise.all([
+				resolveLatestTag(TAG_PREFIXES.llms, fetcher),
+				resolveLatestTag(TAG_PREFIXES.core, fetcher),
+				resolveLatestTag(TAG_PREFIXES.cli, fetcher),
+			]);
+			tags = { llms: llms.tag, core: core.tag, cli: cli.tag };
+			shas = { llms: llms.sha, core: core.sha, cli: cli.sha };
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			warnings.push(`clinefree: tag resolution failed (${reason})`);
+			const cached = cachedContract();
+			return cached ?? { ...BAKED_IN_CONTRACT, warning: `clinefree: tag resolution failed (${reason}); using baked-in snapshot` };
+		}
+
+		const unchanged =
+			tags.llms === state.tags.llms && tags.core === state.tags.core && tags.cli === state.tags.cli;
+		let contract = cachedContract();
+		if (!unchanged || !contract) {
+			try {
+				const [requestHeaders, clientHeaders, recommended] = await Promise.all([
+					fetchRawAtSha(shas.llms!, CONTRACT_FILES.requestHeaders, fetcher),
+					fetchRawAtSha(shas.llms!, CONTRACT_FILES.clientHeaders, fetcher),
+					fetchRawAtSha(shas.llms!, CONTRACT_FILES.recommended, fetcher),
+				]);
+				contract = extractContract(
+					{ requestHeaders, clientHeaders, recommended },
+					{ cli: versionOfTag(tags.cli!), core: versionOfTag(tags.core!) },
+				);
+				writeCache("contract.json", contract);
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				warnings.push(`clinefree: contract download failed (${reason})`);
+				contract =
+					contract ??
+					extractContract({}, { cli: versionOfTag(tags.cli!), core: versionOfTag(tags.core!) });
+			}
+		}
+
+		writeState({ ...state, tags, shas, timestamps: { ...state.timestamps, tags: now(), ...(contract && contract.source === "github" ? { contract: now() } : {}) } });
+		if (contract?.warning) warnings.push(contract.warning);
+		return contract ?? BAKED_IN_CONTRACT;
+	}
+
+	async function fetchLineup(): Promise<LineupEntry[]> {
+		const contract = cachedContract() ?? BAKED_IN_CONTRACT;
+		const url = `${CLINE_API_BASE}${contract.endpointPath}`;
+		try {
+			const response = await fetcher(url, { headers: contract.headers });
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			const payload = (await response.json()) as { free?: LineupEntry[] };
+			const free = Array.isArray(payload.free)
+				? payload.free.filter((e) => e && typeof e.id === "string" && e.id.length > 0)
+				: [];
+			writeCache("lineup.json", free);
+			const state = readState();
+			writeState({ ...state, timestamps: { ...state.timestamps, lineup: now() } });
+			return free;
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			warnings.push(`clinefree: lineup fetch failed (${reason}); using cached lineup`);
+			const cached = readCache<LineupEntry[]>("lineup.json");
+			return cached ?? [];
+		}
+	}
+
+	async function refreshCapabilities(): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }> {
+		const cached = readCache<CachedCapabilities>("capabilities.json");
+		if (feeds && cached && now() - cached.updatedAt < capabilityTtlMs) return feeds;
+
+		const current: CachedCapabilities = cached ?? { openrouter: {}, vercel: {}, updatedAt: 0 };
+		const [or, vc] = await Promise.allSettled([fetchModelsDevOpenRouter(fetcher), fetchVercelGateway(fetcher)]);
+		if (or.status === "fulfilled") current.openrouter = or.value;
+		else warnings.push(`clinefree: models.dev fetch failed (${or.reason instanceof Error ? or.reason.message : String(or.reason)})`);
+		if (vc.status === "fulfilled") current.vercel = vc.value;
+		else warnings.push(`clinefree: vercel gateway fetch failed (${vc.reason instanceof Error ? vc.reason.message : String(vc.reason)})`);
+
+		current.updatedAt = now();
+		writeCache("capabilities.json", current);
+		feeds = { openrouter: current.openrouter, vercel: current.vercel };
+		return feeds;
+	}
+
+	function resolve(id: string) {
+		const active = feeds ?? readCache<CachedCapabilities>("capabilities.json");
+		return resolveCapabilities(id, active?.openrouter ?? {}, active?.vercel ?? {});
+	}
+
+	return {
+		id: "cline",
+		warnings,
+		refreshContract,
+		fetchLineup,
+		refreshCapabilities,
+		resolveCapabilities: resolve,
+		status() {
+			const state = readState();
+			return {
+				tags: state.tags,
+				timestamps: state.timestamps,
+				contractSource: cachedContract()?.source ?? "none",
+			};
+		},
+	};
+}

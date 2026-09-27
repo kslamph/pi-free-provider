@@ -108,7 +108,7 @@ export function extractEndpointPath(source: string): string {
  * to the baked-in snapshot with a warning — never throws.
  */
 export function extractContract(
-	files: { requestHeaders?: string; recommended?: string },
+	files: { requestHeaders?: string; clientHeaders?: string; recommended?: string },
 	versions: { cli: string; core: string },
 ): ContractResult {
 	try {

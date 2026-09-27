@@ -65,25 +65,25 @@
       "id": "6",
       "subject": "Task 6: mapping.ts — capabilities → pi model",
       "description": "LEVELS, ProviderModel, toProviderModel: thinkingLevelMap (off←none/toggle; 1:1 advertised; null otherwise), compat thinkingFormat openrouter iff effort, zero cost, name rule. Tests for deepseek/pixel-canary/mimo/gemini maps. Commit feat: capabilities→pi model mapping.",
-      "status": "in_progress",
+      "status": "completed",
       "activeForm": "Implementing mapping.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790516008810
+      "updatedAt": 1790516085788
     },
     {
       "id": "7",
       "subject": "Task 7: sources/ — FreeModelSource (cline)",
       "description": "sources/types.ts + sources/cline.ts createClineSource: fetchLineup (contract headers, free only, cache fallback), refreshContract (3 tags, contract files, skip on unchanged, baked-in fallback), refreshCapabilities (10-min TTL, cache reuse), resolveCapabilities; state.json tags/shas/timestamps. Fixture recommended-models.json. Commit feat: cline FreeModelSource.",
-      "status": "pending",
+      "status": "in_progress",
       "activeForm": "Implementing sources/cline.ts",
       "metadata": {},
       "blocks": [],
       "blockedBy": [],
       "createdAt": 1790515624825,
-      "updatedAt": 1790515624825
+      "updatedAt": 1790516085789
     },
     {
       "id": "8",
