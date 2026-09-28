@@ -93,10 +93,17 @@ or unreachable registry → baked-in UA + warning; nothing blocks.
      through `@ai-sdk/openai-compatible`, whose builder serializes the cap as `max_tokens` —
      `max_completion_tokens` appears nowhere in that package. pi-ai's detected default is the
      latter, so zen models pin `compat.maxTokensField: "max_tokens"` (pi's built-in opencode
-     catalog and the gateway's own 400-on-over-cap check agree). `zen-wire.test.ts` runs the
-     real pi-ai builder and asserts the serialized body. Clinefree keeps pi's default: the
-     Cline client sends the nested `reasoning.effort` (verified live) and no source says
-     otherwise, so its `max_completion_tokens` stays as verified.
+     catalog and the gateway's own 400-on-over-cap check agree). `wire.test.ts` runs the
+     real pi-ai builder and asserts the serialized body. **Clinefree pins the same field**:
+     the real Cline client (cline/cline `sdk/packages/llms`) uses the same AI SDK package and
+     only renames the cap to `max_completion_tokens` for o-series/gpt-5 ids
+     (`withMaxCompletionTokensForReasoningModels`), and no id in Cline's free lineup matches —
+     so the official client sends `max_tokens`. api.cline.bot accepts both (verified live),
+     so this is parity, not a bug fix.
+     Clinefree **keeps** the nested `reasoning.effort` object even though the official client
+     serializes a flat `reasoning_effort`: the nested form is what the endpoint is verified to
+     honor on Cline's tiered models, and the swap could not be re-verified while the free daily
+     quota was exhausted. Revisit with quota available.
   Cost is always `{ input: 0, output: 0 }` (free). Source recorded as
   `"opencode" | "modelsdev" | "default"` for status display.
 - **Transport assignment** (live-verified 2026-09-27): `package === "aisdk:@ai-sdk/openai"` ⇒

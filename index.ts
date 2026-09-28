@@ -90,7 +90,7 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 	deps.source.warnings.length = 0;
 
 	const models: ProviderModel[] = lineup.map((entry) =>
-		toProviderModel(entry.id, deps.source.resolveCapabilities(entry.id), entry.name),
+		toProviderModel(entry.id, deps.source.resolveCapabilities(entry.id), entry.name, { maxTokensField: "max_tokens" }),
 	);
 	const contract = deps.getContract();
 	const providerIds = (deps.providerIds ??= []);
@@ -270,7 +270,9 @@ export default function clinefree(pi: ExtensionAPI): void {
 		const cachedLineup = readCache<LineupEntry[]>("lineup.json");
 		if (cachedLineup && cachedLineup.length > 0) {
 			try {
-				const models = cachedLineup.map((entry) => toProviderModel(entry.id, source.resolveCapabilities(entry.id), entry.name));
+				const models = cachedLineup.map((entry) =>
+					toProviderModel(entry.id, source.resolveCapabilities(entry.id), entry.name, { maxTokensField: "max_tokens" }),
+				);
 				pi.registerProvider(PROVIDER_ID, {
 					name: PROVIDER_NAME,
 					baseUrl: "https://api.cline.bot/api/v1",

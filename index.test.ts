@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -220,5 +220,32 @@ describe("zenfree session_start wiring", () => {
 		const calls = (ctx as { ui: { notify: ReturnType<typeof vi.fn> } }).ui.notify.mock.calls.map((c) => String(c[0]));
 		expect(calls.some((m) => m.includes("free lineup is empty"))).toBe(true);
 		expect(calls.some((m) => /big-pickle.*switch|switch.*big-pickle/i.test(m))).toBe(true);
+	});
+});
+
+describe("clinefree registration shape", () => {
+	it("pins the official client's max_tokens cap field", async () => {
+		process.env.ZENFREE_CONFIG = join(tmp, "zenfree.json");
+		process.env.ZENFREE_CACHE = join(tmp, "zcache");
+		mkdirSync(process.env.CLINEFREE_CACHE!, { recursive: true });
+		writeFileSync(process.env.CLINEFREE_CONFIG!, JSON.stringify({ auth: { mode: "apiKey", apiKey: "sk-test" } }));
+		writeFileSync(
+			join(process.env.CLINEFREE_CACHE!, "lineup.json"),
+			JSON.stringify([{ id: "cline-free/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" }]),
+		);
+		const registered: { id: string; config: Record<string, unknown> }[] = [];
+		const fakePi = {
+			registerProvider: (id: string, config: unknown) => registered.push({ id, config: config as Record<string, unknown> }),
+			unregisterProvider: () => {},
+			registerCommand: () => {},
+			on: () => {},
+		};
+		const mod = await import("./index.ts");
+		(mod.default as (pi: unknown) => void)(fakePi);
+		const cline = registered.find((r) => r.id === "clinefree");
+		const model = (cline!.config as { models: { compat?: Record<string, unknown> }[] }).models[0]!;
+		expect(model.compat).toMatchObject({ maxTokensField: "max_tokens" });
+		delete process.env.ZENFREE_CONFIG;
+		delete process.env.ZENFREE_CACHE;
 	});
 });
