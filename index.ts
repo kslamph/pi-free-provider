@@ -1,5 +1,5 @@
 /**
- * pi-oc-cline — Cline's free models as one auto-synced pi provider (`clinefree`).
+ * pi-free-provider — Cline's free models as one auto-synced pi provider (`clinefree`).
  *
  * session_start (and /clinefree refresh) fetches the live free lineup, resolves
  * each model's capabilities (models.dev openrouter → Vercel gateway → defaults),

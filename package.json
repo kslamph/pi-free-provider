@@ -1,5 +1,5 @@
 {
-	"name": "pi-oc-cline",
+	"name": "pi-free-provider",
 	"version": "0.1.0",
 	"description": "pi extension exposing Cline's free models as one auto-synced provider (clinefree)",
 	"keywords": [

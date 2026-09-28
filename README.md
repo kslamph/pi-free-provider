@@ -1,4 +1,4 @@
-# pi-oc-cline
+# pi-free-provider
 
 A pi extension that exposes **Cline's free models** as one auto-synced provider.
 
@@ -22,9 +22,22 @@ model definitions again:
 
 ## Install
 
+**From a clone (any machine):**
+
 ```bash
-pi install /path/to/pi-oc-cline
+pi install /path/to/pi-free-provider
 ```
+
+**From this repo over git** — needs working GitHub credentials for a private repo
+(see [INSTALL.md](INSTALL.md) for the full HTTPS/SSH setup and troubleshooting):
+
+```bash
+pi install git:github.com/kslamph/pi-free-provider
+```
+
+Then sign in with **your own** credential — `/clinefree → Auth` and/or
+`/zenfree → Auth`. Keys are stored per-user in `~/.pi/agent/`; nothing is shared
+by the repo.
 
 ## Sign in
 
