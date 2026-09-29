@@ -319,7 +319,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 		}
 	});
 
-	// /clinefree command (status · models · auth · refresh · history).
+	// /clinefree command (status · models · auth; r in the status panel refreshes).
 	let lastLineup: LineupEntry[] = readCache<LineupEntry[]>("lineup.json") ?? [];
 	const patchLineup = (entries: LineupEntry[]): void => {
 		lastLineup = entries;

@@ -64,8 +64,8 @@ from (`openrouter` / `vercel` / `default`).
 
 | What | When |
 |---|---|
-| live lineup | every session start (`/clinefree refresh` to force) |
-| capability feeds | when the lineup contains a model id never fetched before; afterwards never re-fetched automatically — `/clinefree → Refresh now` forces a re-pull |
+| live lineup | every session start (`r` in the `/clinefree` Status panel forces) |
+| capability feeds | when the lineup contains a model id never fetched before; afterwards never re-fetched automatically — `r` in the Status panel forces a re-pull |
 | contract tags | when older than 30 minutes; files re-downloaded only when a tag changed |
 
 Capability data (context window, output cap, reasoning levels) for a given
@@ -93,10 +93,11 @@ npm run typecheck
 CLINEFREE_SMOKE_KEY=sk-… node --experimental-strip-types smoke.ts   # live smoke, never in CI
 ```
 
-## Status / history
+## Status
 
 `/clinefree` also shows the resolved contract tags, feed freshness, the
-credential (masked), the account email, and the last add/remove diff.
+credential (masked), and the account email. Press `r` in the Status panel to
+force a refresh (the summary notification reports what changed).
 
 ## zenfree — OpenCode Zen free models (second source)
 
@@ -110,14 +111,14 @@ credential (masked), the account email, and the last add/remove diff.
   `ZENFREE_CONFIG`/`ZENFREE_CACHE`).
 - **Lineup + capabilities**: console `GET /api/v2/config` is authoritative — free = every cost
   tier `input == 0`; limits/input come from the same response, gaps filled from models.dev
-  `opencode` (fetched once per model id, `Refresh` forces), then zen defaults (200K/32K,
+  `opencode` (fetched once per model id, `r` in the Status panel forces), then zen defaults (200K/32K,
   reasoning on). Delisted models drop immediately.
 - **Client contract**: `User-Agent opencode/latest/<ver>/cli` from the official update service
   (`opencode.ai/update/api/latest/cli`), `x-opencode-client: cli`, plus per-conversation
   `x-opencode-session` and per-turn `x-opencode-request` ids (the gateway 403-rejects requests
   without them). The gateway prescribes `x-opencode-org-id` via the config; it is attached
   automatically.
-- **Sync**: every `session_start`; `/zenfree` → Status · Models · Auth · Refresh · History.
+- **Sync**: every `session_start`; `/zenfree` → Status · Models · Auth (press `r` in Status to refresh).
 
 Live smoke for both sources (keys via env, never committed):
 

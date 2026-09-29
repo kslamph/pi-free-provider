@@ -1,5 +1,5 @@
 /**
- * /clinefree — status, models, auth, refresh, history.
+ * /clinefree — status, models, auth (press r in the status panel to refresh).
  *
  * Pure helpers (formatStatus/formatModels/maskKey/fmtTokens) are the tested
  * surface; the menu loop follows pi-multikey's better-custom-style panels
@@ -78,7 +78,7 @@ export function formatStatus(s: StatusSnapshot, now = Date.now()): string {
 		lines.push(`  contract: github (${s.tags.cli ?? "?"} · core ${s.tags.core ?? "?"} · ${s.tags.llms ?? "?"}) · next check ${minutesIn(s.timestamps.tags, now, s.minIntervalMinutes * 60_000)}`);
 	}
 	lines.push(
-		`  capabilities: ${s.capabilitiesCoveredCount}/${s.capabilitiesLineupCount} models covered (fetched once per model — use Refresh to force)`,
+		`  capabilities: ${s.capabilitiesCoveredCount}/${s.capabilitiesLineupCount} models covered (fetched once per model — press r to force a refresh)`,
 	);
 	lines.push(`  lineup: synced ${minutesAgo(s.timestamps.lineup, now)}`);
 	if (s.authMode) {
@@ -121,7 +121,7 @@ export function formatZenStatus(s: ZenStatusSnapshot, now = Date.now()): string 
 		lines.push(`  client: opencode/latest/${s.cliVersion ?? "?"}/cli (${s.contractSource}) · next check ${minutesIn(s.timestamps.version, now, s.minIntervalMinutes * 60_000)}`);
 	}
 	lines.push(
-		`  capabilities: ${s.capabilitiesCoveredCount}/${s.capabilitiesLineupCount} models covered (fetched once per model — use Refresh to force)`,
+		`  capabilities: ${s.capabilitiesCoveredCount}/${s.capabilitiesLineupCount} models covered (fetched once per model — press r to force a refresh)`,
 	);
 	lines.push(`  lineup: synced ${minutesAgo(s.timestamps.lineup, now)} · ${s.freeCount} free models`);
 	if (s.baseUrl) lines.push(`  gateway: ${s.baseUrl}`);
@@ -166,8 +166,18 @@ function selectOne(ctx: CommandContext, title: string, items: { value: string; l
 	});
 }
 
-function infoPanel(ctx: CommandContext, title: string, body: string): Promise<void> {
+/**
+ * Read-only info panel. `getBody` is re-evaluated on every render, so the panel
+ * shows fresh state once `actions.onRefresh` (bound to the `r` key) has run.
+ */
+function infoPanel(
+	ctx: CommandContext,
+	title: string,
+	getBody: () => string,
+	actions?: { onRefresh?: () => Promise<void> },
+): Promise<void> {
 	return ctx.ui.custom<void>((tui, theme, _kb, done) => {
+		let refreshing = false;
 		return {
 			render(width: number) {
 				const w = Math.max(10, width);
@@ -176,14 +186,30 @@ function infoPanel(ctx: CommandContext, title: string, body: string): Promise<vo
 				add(theme.fg("accent", "─".repeat(w)));
 				add(` ${theme.fg("accent", theme.bold(title))}`);
 				add();
-				for (const line of body.split("\n")) add(` ${line}`);
+				for (const line of getBody().split("\n")) add(` ${line}`);
 				add();
-				add(` ${theme.fg("text", "enter/esc close")}`);
+				if (refreshing) add(` ${theme.fg("text", "refreshing…")}`);
+				else add(` ${theme.fg("text", actions?.onRefresh ? "enter/esc close · r refresh now" : "enter/esc close")}`);
 				return lines;
 			},
 			invalidate() {},
 			handleInput(data: string) {
-				if (matchesKey(data, Key.return) || matchesKey(data, Key.escape)) done();
+				if (matchesKey(data, Key.return) || matchesKey(data, Key.escape)) {
+					done();
+					return;
+				}
+				if (actions?.onRefresh && (data === "r" || data === "R") && !refreshing) {
+					refreshing = true;
+					tui.requestRender();
+					void actions
+						.onRefresh()
+						.catch(() => undefined)
+						.finally(() => {
+							refreshing = false;
+							tui.requestRender();
+						});
+					return;
+				}
 				tui.requestRender();
 			},
 		};
@@ -192,51 +218,33 @@ function infoPanel(ctx: CommandContext, title: string, body: string): Promise<vo
 
 export function registerClinefreeCommand(pi: ExtensionAPI, deps: TuiDeps): void {
 	pi.registerCommand("clinefree", {
-		description: "Cline free models: status, models, auth, refresh, history",
+		description: "Cline free models: status, models, auth",
 		handler: async (_args, ctx) => {
+			const refreshNow = async (): Promise<void> => {
+				try {
+					await deps.refresh();
+					const h = deps.history();
+					deps.notify(
+						`clinefree: refreshed — ${h ? `+${h.added.length}/−${h.removed.length}` : "sync complete"}`,
+					);
+				} catch (error) {
+					deps.notify(`clinefree: refresh failed — ${error instanceof Error ? error.message : String(error)}`);
+				}
+			};
 			for (;;) {
 				const choice = await selectOne(ctx, "clinefree", [
 					{ value: "status", label: "Status" },
 					{ value: "models", label: "Models" },
 					{ value: "auth", label: "Auth" },
-					{ value: "refresh", label: "Refresh now" },
-					{ value: "history", label: "History" },
 				]);
 				if (choice === null) return;
 
 				if (choice === "status") {
-					await infoPanel(ctx, "status", formatStatus(deps.snapshot()));
+					await infoPanel(ctx, "status", () => formatStatus(deps.snapshot()), { onRefresh: refreshNow });
 					continue;
 				}
 				if (choice === "models") {
-					await infoPanel(ctx, "models", formatModels(deps.modelRows()));
-					continue;
-				}
-				if (choice === "history") {
-					const h = deps.history();
-					await infoPanel(
-						ctx,
-						"sync history (last sync)",
-						h
-							? [
-									`added: ${h.added.length > 0 ? h.added.join(", ") : "—"}`,
-									`removed: ${h.removed.length > 0 ? h.removed.join(", ") : "—"}`,
-									`warnings: ${h.warnings.length > 0 ? h.warnings.join(" | ") : "—"}`,
-								].join("\n")
-							: "no sync recorded yet",
-					);
-					continue;
-				}
-				if (choice === "refresh") {
-					try {
-						await deps.refresh();
-						const h = deps.history();
-						deps.notify(
-							`clinefree: refreshed — ${h ? `+${h.added.length}/−${h.removed.length}` : "sync complete"}`,
-						);
-					} catch (error) {
-						deps.notify(`clinefree: refresh failed — ${error instanceof Error ? error.message : String(error)}`);
-					}
+					await infoPanel(ctx, "models", () => formatModels(deps.modelRows()));
 					continue;
 				}
 				if (choice === "auth") {
@@ -276,54 +284,36 @@ export interface ZenTuiDeps {
 	notify(message: string): void;
 }
 
-/** /zenfree — status, models, auth (key only), refresh, history. */
+/** /zenfree — status, models, auth (key only); press r in status to refresh. */
 export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void {
 	pi.registerCommand("zenfree", {
-		description: "OpenCode Zen free models: status, models, auth, refresh, history",
+		description: "OpenCode Zen free models: status, models, auth",
 		handler: async (_args, ctx) => {
+			const refreshNow = async (): Promise<void> => {
+				try {
+					await deps.refresh();
+					const h = deps.history();
+					deps.notify(
+						`zenfree: refreshed — ${h ? `+${h.added.length}/−${h.removed.length}` : "sync complete"}`,
+					);
+				} catch (error) {
+					deps.notify(`zenfree: refresh failed — ${error instanceof Error ? error.message : String(error)}`);
+				}
+			};
 			for (;;) {
 				const choice = await selectOne(ctx, "zenfree", [
 					{ value: "status", label: "Status" },
 					{ value: "models", label: "Models" },
 					{ value: "auth", label: "Auth" },
-					{ value: "refresh", label: "Refresh now" },
-					{ value: "history", label: "History" },
 				]);
 				if (choice === null) return;
 
 				if (choice === "status") {
-					await infoPanel(ctx, "status", formatZenStatus(deps.snapshot()));
+					await infoPanel(ctx, "status", () => formatZenStatus(deps.snapshot()), { onRefresh: refreshNow });
 					continue;
 				}
 				if (choice === "models") {
-					await infoPanel(ctx, "models", formatModels(deps.modelRows()));
-					continue;
-				}
-				if (choice === "history") {
-					const h = deps.history();
-					await infoPanel(
-						ctx,
-						"sync history (last sync)",
-						h
-							? [
-									`added: ${h.added.length > 0 ? h.added.join(", ") : "—"}`,
-									`removed: ${h.removed.length > 0 ? h.removed.join(", ") : "—"}`,
-									`warnings: ${h.warnings.length > 0 ? h.warnings.join(" | ") : "—"}`,
-								].join("\n")
-							: "no sync recorded yet",
-					);
-					continue;
-				}
-				if (choice === "refresh") {
-					try {
-						await deps.refresh();
-						const h = deps.history();
-						deps.notify(
-							`zenfree: refreshed — ${h ? `+${h.added.length}/−${h.removed.length}` : "sync complete"}`,
-						);
-					} catch (error) {
-						deps.notify(`zenfree: refresh failed — ${error instanceof Error ? error.message : String(error)}`);
-					}
+					await infoPanel(ctx, "models", () => formatModels(deps.modelRows()));
 					continue;
 				}
 				if (choice === "auth") {
