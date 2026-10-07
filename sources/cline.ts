@@ -66,10 +66,27 @@ interface CachedCapabilities {
 	coveredIds: string[];
 }
 
+interface ModelsCatalogCache {
+	ids: string[];
+	entries: Record<string, { name?: string; description?: string; tags?: string[] }>;
+}
+
 /** `cli-v3.0.65` → `3.0.65`; `sdk/llms/v0.0.86` → `0.0.86`. */
 function versionOfTag(tag: string): string {
 	const idx = tag.lastIndexOf("v");
 	return idx >= 0 ? tag.slice(idx + 1) : tag;
+}
+
+function dedupeLineup(a: LineupEntry[], b: LineupEntry[]): LineupEntry[] {
+	const seen = new Set<string>();
+	const out: LineupEntry[] = [];
+	for (const entry of a.concat(b)) {
+		if (!seen.has(entry.id)) {
+			seen.add(entry.id);
+			out.push(entry);
+		}
+	}
+	return out;
 }
 
 export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
@@ -140,35 +157,59 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 		return contract ?? BAKED_IN_CONTRACT;
 	}
 
-	async function fetchLineup(): Promise<LineupEntry[]> {
-		const contract = cachedContract() ?? BAKED_IN_CONTRACT;
-		const url = `${CLINE_API_BASE}${contract.endpointPath}`;
+	async function fetchFreeModelsFromModelsCatalog(): Promise<LineupEntry[]> {
+		const url = `${CLINE_API_BASE}/api/v1/ai/cline/models`;
+		const cached = readCache<ModelsCatalogCache>("models.json");
+		if (cached?.ids.length) return cached.ids.map((id) => ({ id, name: cached.entries[id]?.name }));
 		try {
-			const response = await fetcher(url, { headers: contract.headers });
+			const response = await fetcher(url);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
-			const payload = (await response.json()) as { free?: LineupEntry[] };
-			const free = Array.isArray(payload.free)
-				? payload.free.filter((e) => e && typeof e.id === "string" && e.id.length > 0)
-				: [];
-			writeCache("lineup.json", free);
-			const state = readState();
-			writeState({ ...state, timestamps: { ...state.timestamps, lineup: now() } });
+			const payload = (await response.json()) as { data?: Array<{ id: string; name?: string; pricing?: { prompt: string } }> };
+			const free: LineupEntry[] = [];
+			for (const entry of payload.data ?? []) {
+				if (!entry || typeof entry.id !== "string" || entry.id.length === 0) continue;
+				const isFree =
+					entry.pricing?.prompt === "0" || /:free$/i.test(entry.id) || / \(free\)$/i.test(entry.name ?? "");
+				if (isFree) free.push({ id: entry.id, name: entry.name });
+			}
+			writeCache("models.json", { ids: free.map((e) => e.id), entries: free.reduce((acc, e) => { acc[e.id] = { name: e.name }; return acc; }, {} as ModelsCatalogCache["entries"]) });
 			return free;
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
-			warnings.push(`clinefree: lineup fetch failed (${reason}); using cached lineup`);
-			const cached = readCache<LineupEntry[]>("lineup.json");
-			return cached ?? [];
+			warnings.push(`clinefree: models catalog fetch failed (${reason})`);
+			return [];
 		}
 	}
 
-	/**
-	 * Fetch the capability feeds only when `force`, or when `ids` contains at
-	 * least one id never covered by a prior fetch. "Covered" means either the
-	 * id resolved to real data, or both feeds were fetched successfully and
-	 * confirmed the id absent from both — either way there is nothing more to
-	 * learn about it without a manual refresh.
-	 */
+async function fetchLineup(): Promise<LineupEntry[]> {
+	const contract = cachedContract() ?? BAKED_IN_CONTRACT;
+	const baseUrl = `${CLINE_API_BASE}${contract.endpointPath}`;
+	const state = readState();
+	const lineupCache = readCache<LineupEntry[]>("lineup.json");
+
+	const baseFree: LineupEntry[] = [];
+	let recommendedFailed = false;
+	try {
+		const response = await fetcher(baseUrl, { headers: contract.headers });
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const payload = (await response.json()) as { free?: LineupEntry[] };
+		baseFree.push(...(Array.isArray(payload.free) ? payload.free.filter((e) => e && typeof e.id === "string" && e.id.length > 0) : []));
+	} catch (error) {
+		recommendedFailed = true;
+		const reason = error instanceof Error ? error.message : String(error);
+		warnings.push(`clinefree: recommended-models fetch failed (${reason}) — using cached lineup`);
+	}
+
+	// Merge models with pricing.prompt == "0" from the /models catalog.
+	const modelsFree = await fetchFreeModelsFromModelsCatalog();
+	const merged = dedupeLineup(baseFree, modelsFree);
+	writeCache("lineup.json", merged);
+	writeState({ ...state, timestamps: { ...state.timestamps, lineup: now() } });
+
+	// When both sources failed, fall back to the last-known-good cached lineup.
+	if (recommendedFailed && modelsFree.length === 0) return lineupCache ?? [];
+	return merged;
+}
 	async function refreshCapabilities(ids: string[], force = false): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }> {
 		const cached = readCache<CachedCapabilities>("capabilities.json");
 		const coveredIds = new Set(cached?.coveredIds ?? []);

@@ -6,6 +6,10 @@ The free lineup on `api.cline.bot` rotates constantly — new models appear, old
 ones are delisted. This extension keeps itself in sync so you never hand-edit
 model definitions again:
 
+- **Lineup** — `GET /api/v1/ai/cline/recommended-models` (`free[]` from the free
+  bucket) **plus** models with `pricing.prompt == 0` from the full model catalog
+  (`GET /api/v1/ai/cline/models`), fetched live on every session start. New models
+  are added automatically; delisted models are dropped immediately.
 - **Lineup** — `GET /api/v1/ai/cline/recommended-models` (`free[]` only), fetched
   live on every session start. New models are added automatically; delisted
   models are dropped immediately.
