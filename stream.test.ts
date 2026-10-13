@@ -49,7 +49,7 @@ vi.mock("./auth.ts", async (importOriginal) => {
 
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import { refreshClineToken } from "./auth.ts";
-import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation } from "./stream.ts";
+import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation, ZEN_PAD_EXEC_TOOLS, ZEN_PAD_READ_TOOL } from "./stream.ts";
 import { BAKED_IN_ZEN_CONTRACT, type ZenContractResult } from "./sources/opencode-contract.ts";
 import type { ContractResult } from "./contract.ts";
 import type { Credential } from "./state.ts";
@@ -331,5 +331,146 @@ describe("createZenfreeStream", () => {
 		const deps = zenDeps(undefined);
 		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
 		expect(events.map((e) => e.type)).toEqual(["error"]);
+	});
+});
+// The free tier serves only agentic-shaped requests: streaming plus a tool set
+// that declares `read` and one of `shell`/`bash`. pi's /compact declares none,
+// so the gate has to be padded here.
+describe("zenfree agentic-shape padding", () => {
+	const tool = (name: string) => ({ name, description: name, parameters: { type: "object", properties: {} } });
+	const toolless = { messages: [{ role: "system", content: "summarize this", timestamp: 0 }, { role: "user", content: "hi", timestamp: 1 }] } as never;
+	const oneTool = {
+		messages: [
+			{ role: "system", content: "you are pi", timestamp: 0, toolsAdded: [tool("todowrite")] },
+			{ role: "user", content: "hi", timestamp: 1 },
+		],
+	} as never;
+	const agentic = {
+		messages: [
+			{ role: "system", content: "you are pi", timestamp: 0, toolsAdded: ["read", "bash", "edit"].map(tool) },
+			{ role: "user", content: "hi", timestamp: 1 },
+		],
+	} as never;
+	/** Real tools, but no reader — the free tier 403s that shape too. */
+	const noReader = {
+		messages: [
+			{ role: "system", content: "you are pi", timestamp: 0, toolsAdded: ["write", "edit"].map(tool) },
+			{ role: "user", content: "hi", timestamp: 1 },
+		],
+	} as never;
+	/** A reader, but no exec role. */
+	const noExec = {
+		messages: [
+			{ role: "system", content: "you are pi", timestamp: 0, toolsAdded: ["read", "grep"].map(tool) },
+			{ role: "user", content: "hi", timestamp: 1 },
+		],
+	} as never;
+
+	/** Tool names the forwarded transcript declares, in declaration order. */
+	function declaredTools(sent: unknown): string[] {
+		const messages = (sent as { messages: { role: string; toolsAdded?: { name: string }[] }[] }).messages;
+		const names = new Set<string>();
+		for (const message of messages) {
+			if (message.role !== "system") continue;
+			for (const tool of message.toolsAdded ?? []) names.add(tool.name);
+		}
+		return [...names];
+	}
+
+	it("declares read + shell on a toolless request and forbids calling them (chat transport)", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, toolless));
+		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
+		expect(impl.calls[0]!.options.toolChoice).toBe("none");
+	});
+
+	it("fills both roles for a one-tool request and leaves the real tool callable", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, oneTool));
+		expect(declaredTools(impl.calls[0]!.context)).toEqual(["todowrite", ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
+		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
+	});
+
+	it("adds only the missing exec role when read is already declared", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, noExec));
+		expect(declaredTools(impl.calls[0]!.context)).toEqual(["read", "grep", ZEN_PAD_EXEC_TOOLS[0]]);
+	});
+
+	it("adds both roles when the session's tools are neither reader nor exec", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, noReader));
+		expect(declaredTools(impl.calls[0]!.context)).toEqual(["write", "edit", ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
+		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
+	});
+
+	it("leaves an already agentic request untouched", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, agentic));
+		expect(impl.calls[0]!.context).toBe(agentic);
+		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
+	});
+
+	it("never forces tool_choice on the responses transport (only \"auto\" is accepted there)", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelResponses, toolless));
+		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
+		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
+	});
+
+	it("keeps the original prompt and message order when padding", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, toolless));
+		const sent = (impl.calls[0]!.context as { messages: { role: string; content?: unknown }[] }).messages;
+		expect(sent.map((m) => m.role)).toEqual(["system", "user"]);
+		expect(sent[0]!.content).toBe("summarize this");
+	});
+
+	it("unwraps a pad call the model made anyway: its text survives, the call does not", async () => {
+		const impl = fakeImpl([
+			{ type: "start" } as AssistantMessageEvent,
+			{
+				type: "done",
+				reason: "toolUse",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call_1", name: ZEN_PAD_READ_TOOL, arguments: { text: "## Goal\nship it" } }],
+					stopReason: "toolUse",
+				},
+			} as unknown as AssistantMessageEvent,
+		]);
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const events = await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, toolless));
+		const done = events.find((e) => e.type === "done") as { reason: string; message: { stopReason: string; content: unknown[] } };
+		expect(done.reason).toBe("stop");
+		expect(done.message.stopReason).toBe("stop");
+		expect(done.message.content).toEqual([{ type: "text", text: "## Goal\nship it" }]);
+	});
+
+	it("leaves real tool calls alone", async () => {
+		const impl = fakeImpl([
+			{ type: "start" } as AssistantMessageEvent,
+			{
+				type: "done",
+				reason: "toolUse",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call_1", name: "todowrite", arguments: { text: "real work" } }],
+					stopReason: "toolUse",
+				},
+			} as unknown as AssistantMessageEvent,
+		]);
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const events = await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, oneTool));
+		const done = events.find((e) => e.type === "done") as { reason: string; message: { content: { name: string }[] } };
+		expect(done.reason).toBe("toolUse");
+		expect(done.message.content.map((c) => c.name)).toEqual(["todowrite"]);
 	});
 });
