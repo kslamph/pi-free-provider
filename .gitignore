@@ -2,3 +2,7 @@ node_modules/
 *.tmp
 .superpowers/
 .pi/
+
+# scratch probe harness for the media-input study (see docs/media-input-study.md);
+# regenerable with tools/mediaprobe/fixtures.sh, never committed
+tools/mediaprobe/
