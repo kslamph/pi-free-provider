@@ -84,7 +84,6 @@ describe("zen source lineup", () => {
 			"muse-spark-1.3-contributor-free",
 			"nemotron-3-ultra-free",
 			"nemotron-3.5-lightning-free",
-			"space-bunny-free",
 		]);
 		expect(lineup.find((e) => e.id === "mimo-v2.6-flash-free")?.name).toBe("MiMo-V2.6-Flash Free");
 		expect(cache.get("lineup.json")).toBeDefined();
@@ -102,6 +101,23 @@ describe("zen source lineup", () => {
 		const lineup = await broken.fetchLineup(CRED);
 		expect(lineup.map((e) => e.id)).toContain("big-pickle");
 		expect(broken.warnings.join(" ")).toContain("config fetch failed");
+	});
+
+	it("scrubs deprecated models from the cached lineup when the config fetch fails", async () => {
+		const { deps, cache } = makeDeps();
+		cache.set("lineup.json", {
+			models: { "cached-free": { free: true, name: "Cached Free" }, "space-bunny-free": { free: true } },
+			updatedAt: 1,
+		});
+		const broken = createZenSource({
+			...deps,
+			fetcher: (async (url: string) => {
+				if (url === MODELS_DEV_URL) return new Response(JSON.stringify(modelsdevPayload), { status: 200 });
+				throw new Error("network down");
+			}) as typeof fetch,
+		});
+		const lineup = await broken.fetchLineup(CRED);
+		expect(lineup.map((e) => e.id)).toEqual(["cached-free"]);
 	});
 
 	it("composes the lineup from models.dev when the config carries only workspace overrides", async () => {

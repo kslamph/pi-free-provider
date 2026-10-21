@@ -27,6 +27,7 @@ import {
 import {
 	composeZenLineup,
 	fetchConsoleConfig,
+	isDeprecatedModel,
 	mergeZenCapabilities,
 	type ZenCapabilities,
 	type ZenModelEntry,
@@ -112,6 +113,30 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 	const cachedCapabilities = (): CachedCapabilities | undefined =>
 		readCache<CachedCapabilities>("capabilities.json");
 
+	/** Model ids of a lineup, sorted, with names. */
+	const lineupIds = (lineup: CachedLineup | undefined): { id: string; name?: string }[] =>
+		Object.keys(lineup?.models ?? {})
+			.sort()
+			.map((id) => ({ id, name: lineup?.models[id]?.name }));
+
+	/**
+	 * Drop catalog-deprecated models from a lineup. Used for the cached
+	 * fallback so a lineup cached before the deprecation filter existed
+	 * does not keep advertising models zen's gateway answers with 410.
+	 */
+	const withoutDeprecated = (
+		lineup: CachedLineup | undefined,
+		dev: Record<string, FeedEntry>,
+	): CachedLineup | undefined => {
+		if (!lineup) return lineup;
+		const models: Record<string, ZenModelEntry> = {};
+		for (const [id, entry] of Object.entries(lineup.models)) {
+			if (isDeprecatedModel(dev[id])) continue;
+			models[id] = entry;
+		}
+		return { ...lineup, models };
+	};
+
 	async function refreshContract(force = false): Promise<ZenContractResult> {
 		const state = readState();
 		const lastCheck = state.timestamps.version ?? 0;
@@ -145,7 +170,20 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		let cached = cachedLineup();
 		if (!credential?.apiKey) {
 			warnings.push("zenfree: lineup fetch needs a workspace key");
-			return Object.keys(cached?.models ?? {}).sort().map((id) => ({ id, name: cached?.models[id]?.name }));
+			return lineupIds(cached);
+		}
+
+		// models.dev first: it carries the free catalog AND the `status`
+		// verdict, so it can also scrub a cached lineup that predates the
+		// deprecation filter.
+		let devCatalog: Record<string, FeedEntry> = {};
+		let devFailed = false;
+		try {
+			devCatalog = await fetchModelsDevModels("opencode", fetcher);
+		} catch (error) {
+			devFailed = true;
+			const reason = error instanceof Error ? error.message : String(error);
+			warnings.push(`zenfree: models.dev fetch failed (${reason})`);
 		}
 
 		let config;
@@ -159,29 +197,20 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 					: `zenfree: config fetch failed (${reason}); using cached lineup`,
 			);
 			cached = cachedLineup();
-			return Object.keys(cached?.models ?? {}).sort().map((id) => ({ id, name: cached?.models[id]?.name }));
+			return lineupIds(withoutDeprecated(cached, devCatalog));
 		}
 		if (!config) {
 			warnings.push("zenfree: config fetch failed (unexpected payload); using cached lineup");
 			cached = cachedLineup();
-			return Object.keys(cached?.models ?? {}).sort().map((id) => ({ id, name: cached?.models[id]?.name }));
+			return lineupIds(withoutDeprecated(cached, devCatalog));
 		}
 
-		let devCatalog: Record<string, FeedEntry> = {};
-		let devFailed = false;
-		try {
-			devCatalog = await fetchModelsDevModels("opencode", fetcher);
-		} catch (error) {
-			devFailed = true;
-			const reason = error instanceof Error ? error.message : String(error);
-			warnings.push(`zenfree: models.dev fetch failed (${reason})`);
-		}
 		const composed = composeZenLineup(config, devCatalog);
 		const configDeclaresFree = Object.values(config.models).some((m) => m.free && !m.disabled);
 		if (Object.keys(composed.models).length === 0 && devFailed && !configDeclaresFree) {
 			warnings.push("zenfree: no free models found (config carries none, models.dev unavailable); using cached lineup");
 			cached = cachedLineup();
-			return Object.keys(cached?.models ?? {}).sort().map((id) => ({ id, name: cached?.models[id]?.name }));
+			return lineupIds(withoutDeprecated(cached, devCatalog));
 		}
 		const lineup: CachedLineup = { ...composed, updatedAt: now() };
 		writeCache("lineup.json", lineup);

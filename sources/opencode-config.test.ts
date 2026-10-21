@@ -169,6 +169,28 @@ describe("composeZenLineup", () => {
 		expect(composeZenLineup(overlay, dev).models["grok-code"]).toBeUndefined();
 	});
 
+	it("drops models.dev models the catalog flags status deprecated", () => {
+		const composed = composeZenLineup(undefined, dev);
+		expect(composed.models["space-bunny-free"]).toBeUndefined();
+		expect(composed.models["fledge-alpha-free"]).toBeUndefined();
+		// non-deprecated entries survive
+		expect(composed.models["big-pickle"]).toBeDefined();
+		expect(composed.models["grok-code"]).toBeDefined();
+	});
+
+	it("a deprecated catalog verdict vetoes a legacy console free declaration", () => {
+		// the console config still lists space-bunny-free as free (stale legacy shape)
+		const composed = composeZenLineup(parseConsoleConfig(configPayload), dev);
+		expect(composed.models["space-bunny-free"]).toBeUndefined();
+		// …and without a catalog verdict the same console entry is kept
+		expect(composeZenLineup(parseConsoleConfig(configPayload), {}).models["space-bunny-free"]).toBeDefined();
+	});
+
+	it("keeps models whose status is anything other than deprecated", () => {
+		const dev2: Record<string, FeedEntry> = { "beta-model": { id: "beta-model", costInput: 0, status: "beta" } };
+		expect(composeZenLineup(undefined, dev2).models["beta-model"]).toBeDefined();
+	});
+
 	it("empty config + empty dev → empty lineup (no invention)", () => {
 		expect(composeZenLineup({ models: {} }, {}).models).toEqual({});
 		expect(composeZenLineup(undefined, {}).models).toEqual({});

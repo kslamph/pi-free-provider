@@ -19,6 +19,20 @@ import type { FeedEntry } from "../feeds.ts";
 
 export const CONSOLE_CONFIG_URL = "https://opencode.ai/console/api/v2/config";
 
+/**
+ * The catalog status value that marks a model as retired. models.dev (and
+ * opencode's own catalog mirror models.opencode.ai) is the only static source
+ * that carries such a verdict — zen's gateway has no deprecation field
+ * anywhere (`/zen/v1/models`, `/inference/v1/models` and the console config
+ * all list plain ids). opencode's own client hides exactly these models
+ * (`packages/core/src/plugin/models-dev.ts`: `model.status !== "deprecated"`),
+ * and a live probe of the 45-model free lineup confirmed the flag tracks
+ * zen's 410 `ModelDeprecated` closely (35/45 flagged, 33 of them confirmed
+ * dead, 2 false positives). It is a filter, not a verdict: it carries no
+ * replacement pointer, which only zen's 410 body provides.
+ */
+export const DEPRECATED_STATUS = "deprecated";
+
 export interface ZenModelEntry {
 	name?: string;
 	free: boolean;
@@ -123,6 +137,11 @@ export function parseConsoleConfig(payload: unknown): ZenConsoleConfig {
 	return { ...(baseUrl !== undefined ? { baseUrl } : {}), ...(headers !== undefined ? { headers } : {}), models };
 }
 
+/** True when the catalog marks the model as retired. */
+export function isDeprecatedModel(entry: FeedEntry | undefined): boolean {
+	return entry?.status === DEPRECATED_STATUS;
+}
+
 /**
  * Compose the free lineup from the two sources (2026-10-21 contract change):
  * models.dev `opencode` zero-cost models, minus ids the console config
@@ -131,6 +150,13 @@ export function parseConsoleConfig(payload: unknown): ZenConsoleConfig {
  * over models.dev pricing; the overlay-only shape (no cost) never vetoes.
  * Dev `provider.npm` is mapped into the config package vocabulary
  * (`@ai-sdk/openai` → `aisdk:@ai-sdk/openai` ⇒ responses transport).
+ *
+ * Models the catalog flags `status: "deprecated"` are dropped from both
+ * paths: zen's gateway answers them with 410 `ModelDeprecated` (dead, and
+ * the 410 body — not the catalog — is the only place a replacement is
+ * named). A deprecated flag also vetoes a stale legacy console entry that
+ * still declares the model free; models the catalog does not know (no
+ * verdict) are kept.
  */
 export interface ComposedZenLineup {
 	baseUrl?: string;
@@ -147,6 +173,7 @@ export function composeZenLineup(
 	for (const [id, entry] of Object.entries(dev)) {
 		const overlay = config?.models[id];
 		if (overlay?.disabled) continue;
+		if (isDeprecatedModel(entry)) continue;
 		const free = overlay?.costed ? overlay.free : entry.costInput === 0;
 		if (!free) continue;
 		const context = overlay?.limit?.context ?? entry.contextWindow;
@@ -165,6 +192,7 @@ export function composeZenLineup(
 	}
 	for (const [id, entry] of Object.entries(config?.models ?? {})) {
 		if (models[id] || !entry.free || entry.disabled) continue;
+		if (isDeprecatedModel(dev[id])) continue;
 		models[id] = entry;
 	}
 	return {

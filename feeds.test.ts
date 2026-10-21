@@ -99,7 +99,16 @@ describe("fetchModelsDevModels", () => {
 	it("extracts the opencode block from the wrapper-less payload, capturing cost and package hints", async () => {
 		const entries = reduceModelsDevProvider(ocPayload, "opencode");
 		expect(Object.keys(entries).sort()).toEqual(
-			["big-pickle", "gpt-5.1", "grok-code", "mimo-v2.6-flash-free", "muse-spark-1.3-contributor-free", "nemotron-3-ultra-free"].sort(),
+			[
+				"big-pickle",
+				"fledge-alpha-free",
+				"gpt-5.1",
+				"grok-code",
+				"mimo-v2.6-flash-free",
+				"muse-spark-1.3-contributor-free",
+				"nemotron-3-ultra-free",
+				"space-bunny-free",
+			].sort(),
 		);
 		const bp = entries["big-pickle"]!;
 		expect(bp.contextWindow).toBe(200_000);
@@ -114,6 +123,13 @@ describe("fetchModelsDevModels", () => {
 
 	it("returns empty for an unknown provider id", () => {
 		expect(reduceModelsDevProvider(ocPayload, "does-not-exist")).toEqual({});
+	});
+
+	it("captures the catalog status verdict (deprecated) per model", () => {
+		const entries = reduceModelsDevProvider(ocPayload, "opencode");
+		expect(entries["space-bunny-free"]?.status).toBe("deprecated");
+		expect(entries["fledge-alpha-free"]?.status).toBe("deprecated");
+		expect(entries["big-pickle"]?.status).toBeUndefined();
 	});
 
 	it("openrouter wrapper still extracts the same entries as before", () => {

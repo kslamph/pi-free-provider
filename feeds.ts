@@ -25,6 +25,8 @@ export interface FeedEntry {
 	costInput?: number;
 	/** Upstream SDK package hint (models.dev `provider.npm`), when reported. */
 	package?: string;
+	/** The catalog's own verdict on the model (models.dev `status`), e.g. "deprecated". */
+	status?: string;
 }
 
 export const MODELS_DEV_URL = "https://models.dev/api.json";
@@ -64,6 +66,7 @@ function toFeedEntry(model: Record<string, unknown>): FeedEntry | undefined {
 	const costInput = typeof cost.input === "number" ? cost.input : undefined;
 	const npm = ((model.provider ?? {}) as Record<string, unknown>).npm;
 	const pkg = typeof npm === "string" ? npm : undefined;
+	const status = typeof model.status === "string" ? model.status : undefined;
 	return {
 		id,
 		...(name !== undefined ? { name } : {}),
@@ -74,6 +77,7 @@ function toFeedEntry(model: Record<string, unknown>): FeedEntry | undefined {
 		...(toggle !== undefined ? { toggle } : {}),
 		...(costInput !== undefined ? { costInput } : {}),
 		...(pkg !== undefined ? { package: pkg } : {}),
+		...(status !== undefined ? { status } : {}),
 	};
 }
 
