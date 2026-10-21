@@ -112,6 +112,64 @@
 					"cache_write": 0
 				}
 			},
+			"gpt-5.1": {
+				"id": "gpt-5.1",
+				"name": "GPT-5.1",
+				"description": "Paid flagship — pricing-overlay test entry",
+				"attachment": false,
+				"reasoning": true,
+				"reasoning_options": [],
+				"tool_call": true,
+				"temperature": true,
+				"knowledge": "2025-06",
+				"modalities": {
+					"input": [
+						"text",
+						"image"
+					],
+					"output": [
+						"text"
+					]
+				},
+				"limit": {
+					"context": 400000,
+					"output": 128000
+				},
+				"cost": {
+					"input": 1.07,
+					"output": 8.5,
+					"cache_read": 0.27
+				}
+			},
+			"grok-code": {
+				"id": "grok-code",
+				"name": "Grok Code",
+				"description": "Free xAI coding model — dev-catalog-only lineup test entry",
+				"family": "grok",
+				"attachment": false,
+				"reasoning": true,
+				"reasoning_options": [],
+				"tool_call": true,
+				"temperature": true,
+				"knowledge": "2025-11",
+				"modalities": {
+					"input": [
+						"text"
+					],
+					"output": [
+						"text"
+					]
+				},
+				"limit": {
+					"context": 256000,
+					"output": 32768
+				},
+				"cost": {
+					"input": 0,
+					"output": 0,
+					"cache_read": 0
+				}
+			},
 			"muse-spark-1.3-contributor-free": {
 				"id": "muse-spark-1.3-contributor-free",
 				"name": "Muse Spark 1.3 Free",

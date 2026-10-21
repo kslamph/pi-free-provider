@@ -1,13 +1,15 @@
 /**
- * OpenCode console `/api/v2/config` parsing + zen capability merge
- * (spec §zen-2/§zen-4).
+ * OpenCode console `/api/v2/config` parsing + zen lineup composition + zen
+ * capability merge (spec §zen-2/§zen-4, amended 2026-10-21).
  *
- * The config response is the authoritative lineup AND capability source:
- * `providers.opencode` carries `settings.baseURL`, optional `headers`
- * (e.g. `x-opencode-org-id`), and `models: { [id]: { name?, package?,
- * cost?, limit?{context,output}, capabilities?{input[]} } }`. Free means
- * every cost tier has `input == 0` — opencode's own rule (a model with no
- * `cost` field is never free).
+ * The console response changed on ~2026-10: it now carries only workspace
+ * overrides (`models: { [id]: { disabled?: true, package? } }`, headers,
+ * no cost/baseURL), while the full catalog with pricing moved to models.dev's
+ * `opencode` block (`cost.input == 0` ⇒ free). The free lineup is therefore
+ * COMPOSED (composeZenLineup): models.dev zero-cost models, minus disabled
+ * ids, plus any config-only entry that still declares free the legacy way
+ * (cost array, every tier `input == 0`) — so an old full-catalog payload keeps
+ * working unchanged.
  *
  * Parsing is lenient by design: an unknown shape degrades to empty models,
  * never a crash (spec §zen-9).
@@ -25,6 +27,11 @@ export interface ZenModelEntry {
 	/** Upstream SDK package. `aisdk:@ai-sdk/openai` ⇒ the model speaks the OpenAI
 	 * Responses API (muse-spark); anything else rides chat completions. */
 	package?: string;
+	/** Workspace override: the entry is turned off for this workspace. */
+	disabled?: boolean;
+	/** The entry carried a `cost` array — an explicit paid/free verdict that
+	 *  outranks models.dev pricing (absent in the 2026-10 overlay-only shape). */
+	costed?: boolean;
 }
 
 export interface ZenConsoleConfig {
@@ -78,6 +85,8 @@ function toModelEntry(raw: unknown): ZenModelEntry | undefined {
 		: undefined;
 	return {
 		free: isFree(model.cost),
+		...(Array.isArray(model.cost) ? { costed: true } : {}),
+		...(typeof model.disabled === "boolean" ? { disabled: model.disabled } : {}),
 		...(typeof model.name === "string" ? { name: model.name } : {}),
 		...(Object.keys(limit).length > 0 ? { limit } : {}),
 		...(input && input.length > 0 ? { input } : {}),
@@ -112,6 +121,57 @@ export function parseConsoleConfig(payload: unknown): ZenConsoleConfig {
 				)
 			: undefined;
 	return { ...(baseUrl !== undefined ? { baseUrl } : {}), ...(headers !== undefined ? { headers } : {}), models };
+}
+
+/**
+ * Compose the free lineup from the two sources (2026-10-21 contract change):
+ * models.dev `opencode` zero-cost models, minus ids the console config
+ * disables, UNION config-only entries that still declare free the legacy
+ * way. A console entry WITH a cost array is an explicit verdict that wins
+ * over models.dev pricing; the overlay-only shape (no cost) never vetoes.
+ * Dev `provider.npm` is mapped into the config package vocabulary
+ * (`@ai-sdk/openai` → `aisdk:@ai-sdk/openai` ⇒ responses transport).
+ */
+export interface ComposedZenLineup {
+	baseUrl?: string;
+	headers?: Record<string, string>;
+	/** Free models only, keyed by id. */
+	models: Record<string, ZenModelEntry>;
+}
+
+export function composeZenLineup(
+	config: ZenConsoleConfig | undefined,
+	dev: Record<string, FeedEntry>,
+): ComposedZenLineup {
+	const models: Record<string, ZenModelEntry> = {};
+	for (const [id, entry] of Object.entries(dev)) {
+		const overlay = config?.models[id];
+		if (overlay?.disabled) continue;
+		const free = overlay?.costed ? overlay.free : entry.costInput === 0;
+		if (!free) continue;
+		const context = overlay?.limit?.context ?? entry.contextWindow;
+		const output = overlay?.limit?.output ?? entry.maxTokens;
+		const input = overlay?.input ?? piInput(entry.inputModalities);
+		const pkg = overlay?.package ?? (entry.package !== undefined ? `aisdk:${entry.package}` : undefined);
+		models[id] = {
+			free: true,
+			...((overlay?.name ?? entry.name) !== undefined ? { name: overlay?.name ?? entry.name } : {}),
+			...(context !== undefined || output !== undefined
+				? { limit: { ...(context !== undefined ? { context } : {}), ...(output !== undefined ? { output } : {}) } }
+				: {}),
+			...(input !== undefined && input.length > 0 ? { input } : {}),
+			...(pkg !== undefined ? { package: pkg } : {}),
+		};
+	}
+	for (const [id, entry] of Object.entries(config?.models ?? {})) {
+		if (models[id] || !entry.free || entry.disabled) continue;
+		models[id] = entry;
+	}
+	return {
+		...(config?.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
+		...(config?.headers !== undefined ? { headers: config.headers } : {}),
+		models,
+	};
 }
 
 /**

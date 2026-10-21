@@ -96,15 +96,20 @@ describe("feed fetchers", () => {
 describe("fetchModelsDevModels", () => {
 	const ocPayload = JSON.parse(readFileSync("test-fixtures/modelsdev-opencode.json", "utf-8"));
 
-	it("extracts the opencode block from the wrapper-less payload", async () => {
+	it("extracts the opencode block from the wrapper-less payload, capturing cost and package hints", async () => {
 		const entries = reduceModelsDevProvider(ocPayload, "opencode");
 		expect(Object.keys(entries).sort()).toEqual(
-			["big-pickle", "mimo-v2.6-flash-free", "muse-spark-1.3-contributor-free", "nemotron-3-ultra-free"].sort(),
+			["big-pickle", "gpt-5.1", "grok-code", "mimo-v2.6-flash-free", "muse-spark-1.3-contributor-free", "nemotron-3-ultra-free"].sort(),
 		);
 		const bp = entries["big-pickle"]!;
 		expect(bp.contextWindow).toBe(200_000);
 		expect(bp.maxTokens).toBe(32_000);
 		expect(bp.name).toBe("Big Pickle");
+		expect(bp.costInput).toBe(0);
+		expect(bp.package).toBeUndefined();
+		expect(entries["gpt-5.1"]?.costInput).toBe(1.07);
+		expect(entries["grok-code"]?.costInput).toBe(0);
+		expect(entries["muse-spark-1.3-contributor-free"]?.package).toBe("@ai-sdk/openai");
 	});
 
 	it("returns empty for an unknown provider id", () => {

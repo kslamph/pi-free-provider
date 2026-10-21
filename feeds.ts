@@ -21,6 +21,10 @@ export interface FeedEntry {
 	effortValues?: string[];
 	/** True when the feed reports a reasoning toggle for this model. */
 	toggle?: boolean;
+	/** USD per million input tokens, when the feed reports cost (models.dev `cost.input`). */
+	costInput?: number;
+	/** Upstream SDK package hint (models.dev `provider.npm`), when reported. */
+	package?: string;
 }
 
 export const MODELS_DEV_URL = "https://models.dev/api.json";
@@ -56,6 +60,10 @@ function toFeedEntry(model: Record<string, unknown>): FeedEntry | undefined {
 		: undefined;
 	const { effortValues, toggle } = reasoningFrom(model.reasoning_options);
 	const name = typeof model.name === "string" ? model.name : undefined;
+	const cost = (model.cost ?? {}) as Record<string, unknown>;
+	const costInput = typeof cost.input === "number" ? cost.input : undefined;
+	const npm = ((model.provider ?? {}) as Record<string, unknown>).npm;
+	const pkg = typeof npm === "string" ? npm : undefined;
 	return {
 		id,
 		...(name !== undefined ? { name } : {}),
@@ -64,6 +72,8 @@ function toFeedEntry(model: Record<string, unknown>): FeedEntry | undefined {
 		...(inputModalities !== undefined && inputModalities.length > 0 ? { inputModalities } : {}),
 		...(effortValues !== undefined ? { effortValues } : {}),
 		...(toggle !== undefined ? { toggle } : {}),
+		...(costInput !== undefined ? { costInput } : {}),
+		...(pkg !== undefined ? { package: pkg } : {}),
 	};
 }
 

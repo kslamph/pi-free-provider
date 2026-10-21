@@ -138,6 +138,7 @@ describe("zen bootstrap", () => {
 
 describe("zenfree session_start wiring", () => {
 	let consolePayload: unknown;
+	let modelsdevPayload: unknown;
 	let routerCalls: string[];
 
 	function fakeCtx(model?: { id: string }) {
@@ -153,7 +154,7 @@ describe("zenfree session_start wiring", () => {
 			routerCalls.push(String(url));
 			if (String(url).includes("/api/v2/config")) return new Response(JSON.stringify(consolePayload ?? consoleConfig), { status: 200 });
 			if (String(url).includes("update/api")) return new Response(JSON.stringify(updateApi), { status: 200 });
-			if (String(url).includes("models.dev")) return new Response(JSON.stringify(modelsdev), { status: 200 });
+			if (String(url).includes("models.dev")) return new Response(JSON.stringify(modelsdevPayload ?? modelsdev), { status: 200 });
 			return new Response("nope", { status: 404 });
 		}) as typeof fetch;
 		vi.stubGlobal("fetch", fetcher);
@@ -162,6 +163,7 @@ describe("zenfree session_start wiring", () => {
 	beforeEach(() => {
 		routerCalls = [];
 		consolePayload = undefined;
+		modelsdevPayload = undefined;
 		process.env.ZENFREE_CONFIG = join(tmp, "zenfree.json");
 		process.env.ZENFREE_CACHE = join(tmp, "zcache");
 		writeFileSync(process.env.ZENFREE_CONFIG, JSON.stringify({
@@ -215,6 +217,8 @@ describe("zenfree session_start wiring", () => {
 		const ctx = { ui: { notify: vi.fn() }, model: { id: "big-pickle" } } as never;
 		await handler({ reason: "new" }, ctx);
 		consolePayload = { providers: { opencode: { models: { paid: { cost: [{ input: 3, output: 1 }] } } } } };
+		// the composed lineup empties only when models.dev has no free models either
+		modelsdevPayload = {};
 		await handler({ reason: "new" }, ctx);
 		expect(unregistered).toContain("zenfree");
 		const calls = (ctx as { ui: { notify: ReturnType<typeof vi.fn> } }).ui.notify.mock.calls.map((c) => String(c[0]));

@@ -4,9 +4,11 @@
  *
  *  - contract: the client version comes from the official update service
  *    (min-interval gated; `force` bypasses), baked-in fallback on failure.
- *  - lineup: console /api/v2/config with the workspace key — the same
- *    response carries the capabilities (limit/input/package), the gateway
- *    baseUrl, and any prescribed provider headers. Last-known-good on failure.
+ *  - lineup: console /api/v2/config (workspace overrides) COMPOSED with the
+ *    models.dev `opencode` catalog (2026-10-21 contract change): free =
+ *    models.dev zero-cost minus config-disabled, plus config-only legacy
+ *    free entries; the config still contributes baseUrl/headers/overrides.
+ *    Last-known-good when neither source can produce a lineup.
  *  - capabilities: config-derived caps ride the lineup fetch; the models.dev
  *    `opencode` block fills gaps, fetched once per uncovered id (`force`
  *    bypasses the coverage gate — same pattern as clinefree's cbfeb03).
@@ -23,6 +25,7 @@ import {
 	type ZenContractResult,
 } from "./opencode-contract.ts";
 import {
+	composeZenLineup,
 	fetchConsoleConfig,
 	mergeZenCapabilities,
 	type ZenCapabilities,
@@ -164,20 +167,27 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 			return Object.keys(cached?.models ?? {}).sort().map((id) => ({ id, name: cached?.models[id]?.name }));
 		}
 
-		const free: Record<string, ZenModelEntry> = {};
-		for (const [id, entry] of Object.entries(config.models)) {
-			if (entry.free) free[id] = entry;
+		let devCatalog: Record<string, FeedEntry> = {};
+		let devFailed = false;
+		try {
+			devCatalog = await fetchModelsDevModels("opencode", fetcher);
+		} catch (error) {
+			devFailed = true;
+			const reason = error instanceof Error ? error.message : String(error);
+			warnings.push(`zenfree: models.dev fetch failed (${reason})`);
 		}
-		const lineup: CachedLineup = {
-			...(config.baseUrl !== undefined ? { baseUrl: config.baseUrl } : {}),
-			...(config.headers !== undefined ? { headers: config.headers } : {}),
-			models: free,
-			updatedAt: now(),
-		};
+		const composed = composeZenLineup(config, devCatalog);
+		const configDeclaresFree = Object.values(config.models).some((m) => m.free && !m.disabled);
+		if (Object.keys(composed.models).length === 0 && devFailed && !configDeclaresFree) {
+			warnings.push("zenfree: no free models found (config carries none, models.dev unavailable); using cached lineup");
+			cached = cachedLineup();
+			return Object.keys(cached?.models ?? {}).sort().map((id) => ({ id, name: cached?.models[id]?.name }));
+		}
+		const lineup: CachedLineup = { ...composed, updatedAt: now() };
 		writeCache("lineup.json", lineup);
 		const state = readState();
 		writeState({ ...state, timestamps: { ...state.timestamps, lineup: now() } });
-		return Object.keys(free).sort().map((id) => ({ id, name: free[id]?.name }));
+		return Object.keys(lineup.models).sort().map((id) => ({ id, name: lineup.models[id]?.name }));
 	}
 
 	async function refreshCapabilities(ids: string[], force = false): Promise<Record<string, Record<string, FeedEntry>>> {

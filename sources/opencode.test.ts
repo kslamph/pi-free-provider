@@ -8,6 +8,7 @@ import { createZenSource, type ZenSourceDeps } from "./opencode.ts";
 
 const dir = join(import.meta.dirname, "..", "test-fixtures");
 const consoleConfigPayload = JSON.parse(readFileSync(join(dir, "console-config.json"), "utf-8"));
+const consoleOverlayPayload = JSON.parse(readFileSync(join(dir, "console-config-overlay.json"), "utf-8"));
 const updateApiPayload = JSON.parse(readFileSync(join(dir, "update-api.json"), "utf-8"));
 const modelsdevPayload = JSON.parse(readFileSync(join(dir, "modelsdev-opencode.json"), "utf-8"));
 
@@ -76,6 +77,7 @@ describe("zen source lineup", () => {
 		expect(fetched).toContain(CONSOLE_CONFIG_URL);
 		expect(lineup.map((e) => e.id)).toEqual([
 			"big-pickle",
+			"grok-code",
 			"ling-3.0-flash-fin-free",
 			"longcat-2.5-preview-free",
 			"mimo-v2.6-flash-free",
@@ -102,9 +104,66 @@ describe("zen source lineup", () => {
 		expect(broken.warnings.join(" ")).toContain("config fetch failed");
 	});
 
-	it("returns [] when the config lists zero free models", async () => {
+	it("composes the lineup from models.dev when the config carries only workspace overrides", async () => {
+		const { deps, cache } = makeDeps({
+			fetcher: (async (url: string) => {
+				if (url === UPDATE_API_URL) return new Response(JSON.stringify(updateApiPayload), { status: 200 });
+				if (url === CONSOLE_CONFIG_URL) return new Response(JSON.stringify(consoleOverlayPayload), { status: 200 });
+				if (url === MODELS_DEV_URL) return new Response(JSON.stringify(modelsdevPayload), { status: 200 });
+				return new Response("not found", { status: 404 });
+			}) as typeof fetch,
+		});
+		const source = createZenSource(deps);
+		const lineup = await source.fetchLineup(CRED);
+		// muse disabled by the workspace overlay, gpt-5.1 paid, grok-code dev-only
+		expect(lineup.map((e) => e.id)).toEqual(["big-pickle", "grok-code", "mimo-v2.6-flash-free", "nemotron-3-ultra-free"]);
+		expect(lineup.find((e) => e.id === "grok-code")?.name).toBe("Grok Code");
+		expect(source.configHeaders()).toEqual({ "x-opencode-org-id": "org_01SYNTHETICOVERLAYTEST00A" });
+		const cachedLineup = cache.get("lineup.json") as { models: Record<string, { name?: string }> };
+		expect(cachedLineup.models["grok-code"]?.name).toBe("Grok Code");
+	});
+
+	it("keeps the cached lineup when models.dev fails and the config declares no free models", async () => {
+		const { deps, cache } = makeDeps({
+			fetcher: (async (url: string) => {
+				if (url === CONSOLE_CONFIG_URL) return new Response(JSON.stringify(consoleOverlayPayload), { status: 200 });
+				return new Response("nope", { status: 503 });
+			}) as typeof fetch,
+		});
+		cache.set("lineup.json", { models: { "cached-free": { free: true, name: "Cached Free" } }, updatedAt: 1 });
+		const source = createZenSource(deps);
+		const lineup = await source.fetchLineup(CRED);
+		expect(lineup.map((e) => e.id)).toEqual(["cached-free"]);
+		expect(source.warnings.join(" ")).toContain("models.dev");
+		const stillCached = cache.get("lineup.json") as { models: Record<string, unknown> };
+		expect(stillCached.models["cached-free"]).toBeDefined();
+	});
+
+	it("still builds a config-only lineup when models.dev fails but the config lists free models", async () => {
 		const { deps } = makeDeps({
-			fetcher: (async () => new Response(JSON.stringify({ providers: { opencode: { models: { "paid": { cost: [{ input: 3, output: 1 }] } } } } }), { status: 200 })) as typeof fetch,
+			fetcher: (async (url: string) => {
+				if (url === CONSOLE_CONFIG_URL) return new Response(JSON.stringify(consoleConfigPayload), { status: 200 });
+				return new Response("nope", { status: 503 });
+			}) as typeof fetch,
+		});
+		const source = createZenSource(deps);
+		const lineup = await source.fetchLineup(CRED);
+		expect(lineup.map((e) => e.id)).toContain("big-pickle");
+		expect(lineup).toHaveLength(8);
+		expect(source.warnings.join(" ")).toContain("models.dev");
+	});
+
+	it("returns [] when the config lists zero free models and models.dev has none either", async () => {
+		const { deps } = makeDeps({
+			fetcher: (async (url: string) => {
+				if (url === CONSOLE_CONFIG_URL)
+					return new Response(
+						JSON.stringify({ providers: { opencode: { models: { paid: { cost: [{ input: 3, output: 1 }] } } } } }),
+						{ status: 200 },
+					);
+				if (url === MODELS_DEV_URL) return new Response("{}", { status: 200 });
+				return new Response("not found", { status: 404 });
+			}) as typeof fetch,
 		});
 		const lineup = await createZenSource(deps).fetchLineup(CRED);
 		expect(lineup).toEqual([]);
@@ -150,13 +209,13 @@ describe("zen source capabilities", () => {
 		const source = createZenSource(deps);
 		await source.fetchLineup(CRED);
 		await source.refreshCapabilities(["big-pickle"]);
-		expect(fetched.filter((u) => u === MODELS_DEV_URL)).toHaveLength(1);
+		expect(fetched.filter((u) => u === MODELS_DEV_URL)).toHaveLength(2); // 1 lineup + 1 capabilities
 		await source.refreshCapabilities(["big-pickle"]);
-		expect(fetched.filter((u) => u === MODELS_DEV_URL)).toHaveLength(1);
-		await source.refreshCapabilities(["big-pickle", "brand-new-id"]);
 		expect(fetched.filter((u) => u === MODELS_DEV_URL)).toHaveLength(2);
-		await source.refreshCapabilities(["big-pickle"], true);
+		await source.refreshCapabilities(["big-pickle", "brand-new-id"]);
 		expect(fetched.filter((u) => u === MODELS_DEV_URL)).toHaveLength(3);
+		await source.refreshCapabilities(["big-pickle"], true);
+		expect(fetched.filter((u) => u === MODELS_DEV_URL)).toHaveLength(4);
 	});
 });
 

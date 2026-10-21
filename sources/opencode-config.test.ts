@@ -7,14 +7,18 @@ import { toProviderModel } from "../mapping.ts";
 import {
 	CONSOLE_CONFIG_URL,
 	ZEN_DEFAULTS,
+	composeZenLineup,
 	fetchConsoleConfig,
 	mergeZenCapabilities,
 	parseConsoleConfig,
+	type ZenConsoleConfig,
 	type ZenModelEntry,
 } from "./opencode-config.ts";
+import { reduceModelsDevProvider } from "../feeds.ts";
 
 const dir = join(import.meta.dirname, "..", "test-fixtures");
 const configPayload = JSON.parse(readFileSync(join(dir, "console-config.json"), "utf-8"));
+const overlayPayload = JSON.parse(readFileSync(join(dir, "console-config-overlay.json"), "utf-8"));
 
 describe("parseConsoleConfig", () => {
 	it("captures baseUrl, provider headers, and the free lineup from the live payload", () => {
@@ -59,6 +63,20 @@ describe("parseConsoleConfig", () => {
 		expect(muse.package).toBe("aisdk:@ai-sdk/openai");
 	});
 
+	it("captures disabled flags and whether the entry carried a cost array", () => {
+		const old = parseConsoleConfig(configPayload);
+		expect(old.models["claude-sonnet-5"]!.costed).toBe(true);
+		expect(old.models["claude-sonnet-5"]!.disabled).toBe(true);
+		expect(old.models["big-pickle"]!.costed).toBe(true);
+		expect(old.models["big-pickle"]!.disabled).toBeUndefined();
+		// The 2026-10 workspace-overlay shape: entries carry only overrides,
+		// no cost array and usually just `disabled`.
+		const overlay = parseConsoleConfig(overlayPayload);
+		expect(overlay.models["claude-sonnet-5"]!).toEqual({ free: false, disabled: true });
+		expect(overlay.models["grok-build-0.1"]!).toEqual({ free: false, package: "aisdk:@ai-sdk/openai-compatible" });
+		expect(overlay.models["claude-sonnet-5"]!.costed).toBeUndefined();
+	});
+
 	it("is lenient on unknown shapes: empty models, no crash", () => {
 		expect(parseConsoleConfig(undefined)).toEqual({ models: {} });
 		expect(parseConsoleConfig({ providers: {} })).toEqual({ models: {} });
@@ -86,6 +104,74 @@ describe("fetchConsoleConfig", () => {
 			throw new Error("network down");
 		}) as typeof fetch;
 		expect(await fetchConsoleConfig("k", broken)).toBeUndefined();
+	});
+});
+
+describe("composeZenLineup", () => {
+	const dev = reduceModelsDevProvider(JSON.parse(readFileSync(join(dir, "modelsdev-opencode.json"), "utf-8")), "opencode");
+	const legacyFreeIds = [
+		"big-pickle",
+		"ling-3.0-flash-fin-free",
+		"longcat-2.5-preview-free",
+		"mimo-v2.6-flash-free",
+		"muse-spark-1.3-contributor-free",
+		"nemotron-3-ultra-free",
+		"nemotron-3.5-lightning-free",
+		"space-bunny-free",
+	];
+
+	it("config-only composition keeps the legacy full-catalog behavior", () => {
+		const composed = composeZenLineup(parseConsoleConfig(configPayload), {});
+		expect(Object.keys(composed.models).sort()).toEqual(legacyFreeIds.slice().sort());
+		expect(composed.baseUrl).toBe("https://opencode.ai/inference/openai/v1");
+	});
+
+	it("workspace-overlay config: free = models.dev zero-cost minus disabled, paid skipped", () => {
+		const composed = composeZenLineup(parseConsoleConfig(overlayPayload), dev);
+		// muse is disabled by the overlay, gpt-5.1 is paid, grok-code is dev-only free
+		expect(Object.keys(composed.models).sort()).toEqual(
+			["big-pickle", "grok-code", "mimo-v2.6-flash-free", "nemotron-3-ultra-free"].sort(),
+		);
+		expect(composed.baseUrl).toBeUndefined();
+		expect(composed.headers).toEqual({ "x-opencode-org-id": "org_01SYNTHETICOVERLAYTEST00A" });
+	});
+
+	it("dev-only entries carry name/limits/input; config overlay overrides the fields it has", () => {
+		const composed = composeZenLineup(parseConsoleConfig(configPayload), dev);
+		expect(composed.models["grok-code"]!).toMatchObject({
+			free: true,
+			name: "Grok Code",
+			limit: { context: 256_000, output: 32_768 },
+			input: ["text"],
+		});
+		// config limit fields win over dev for overlapping ids
+		expect(composed.models["big-pickle"]!.limit).toEqual({ context: 200_000, output: 32_000 });
+		expect(composed.models["longcat-2.5-preview-free"]!.limit).toEqual({ context: 1_000_000, output: 131_072 });
+	});
+
+	it("dev npm package maps to the responses transport package vocabulary", () => {
+		const composed = composeZenLineup(undefined, dev);
+		expect(composed.models["muse-spark-1.3-contributor-free"]!.package).toBe("aisdk:@ai-sdk/openai");
+		expect(composed.models["big-pickle"]!.package).toBeUndefined();
+	});
+
+	it("a console entry with a cost array is an explicit verdict overriding models.dev", () => {
+		// dev says free, config declares paid → excluded
+		const paidOverlay: ZenConsoleConfig = { models: { "big-pickle": { free: false, costed: true } } };
+		expect(composeZenLineup(paidOverlay, dev).models["big-pickle"]).toBeUndefined();
+		// dev says paid, config declares free → included
+		const freeOverlay: ZenConsoleConfig = { models: { "gpt-5.1": { free: true, costed: true } } };
+		expect(composeZenLineup(freeOverlay, dev).models["gpt-5.1"]?.free).toBe(true);
+	});
+
+	it("a disabled console entry vetoes models.dev freeness even without cost info", () => {
+		const overlay: ZenConsoleConfig = { models: { "grok-code": { free: false, disabled: true } } };
+		expect(composeZenLineup(overlay, dev).models["grok-code"]).toBeUndefined();
+	});
+
+	it("empty config + empty dev → empty lineup (no invention)", () => {
+		expect(composeZenLineup({ models: {} }, {}).models).toEqual({});
+		expect(composeZenLineup(undefined, {}).models).toEqual({});
 	});
 });
 

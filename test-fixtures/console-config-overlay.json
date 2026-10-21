@@ -1,0 +1,31 @@
+{
+	"providers": {
+		"opencode": {
+			"name": "Personal / OpenCode",
+			"env": [
+				"OPENCODE_CONSOLE_TOKEN"
+			],
+			"package": "aisdk:@ai-sdk/openai-compatible",
+			"settings": {
+				"apiKey": "{env:OPENCODE_CONSOLE_TOKEN}"
+			},
+			"headers": {
+				"x-opencode-org-id": "org_01SYNTHETICOVERLAYTEST00A"
+			},
+			"models": {
+				"claude-sonnet-5": {
+					"disabled": true
+				},
+				"gpt-5.4-mini": {
+					"disabled": true
+				},
+				"muse-spark-1.3-contributor-free": {
+					"disabled": true
+				},
+				"grok-build-0.1": {
+					"package": "aisdk:@ai-sdk/openai-compatible"
+				}
+			}
+		}
+	}
+}
