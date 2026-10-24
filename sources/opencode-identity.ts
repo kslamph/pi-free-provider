@@ -59,6 +59,14 @@ export function createMessageId(): string {
 	return `msg_${createIdentifier(false)}`;
 }
 
+/** Stable project identifier for `x-opencode-project` — the v2.1 client sends a
+ * 40-hex sha1 of the project directory on every request; mirror that shape
+ * (keyless zen recipe, 2026-10-24). Stable for the process lifetime. */
+let cachedProjectId: string | undefined;
+export function zenProjectId(): string {
+	return (cachedProjectId ??= createHash("sha1").update(process.cwd()).digest("hex"));
+}
+
 /**
  * Stable key for "the turn we are currently answering" — opencode's `lastUser`.
  * pi rebuilds message objects between requests, so object identity is useless;

@@ -16,6 +16,7 @@ import { DEFAULT_CONFIG, loadConfig, readCache, saveConfig, writeCache, zenfreeS
 import { toProviderModel, type ProviderModel } from "./mapping.ts";
 import { type DesiredProvider, type MultiSyncDeps, type RegisteredState, diffModels, syncProviders } from "./registry.ts";
 import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation } from "./stream.ts";
+import { createZenSidecar } from "./sidecar.ts";
 import { createZenSource, type ZenSource } from "./sources/opencode.ts";
 import { BAKED_IN_ZEN_CONTRACT, type ZenContractResult } from "./sources/opencode-contract.ts";
 import type { ZenCapabilities } from "./sources/opencode-config.ts";
@@ -154,7 +155,6 @@ export interface ZenTargetOpts {
 	resolve(id: string): ZenCapabilities;
 	resolveTransport(id: string): "openai-completions" | "openai-responses";
 	contract: ZenContractResult;
-	extraHeaders?: Record<string, string>;
 	streamSimple: (model: never, context: never, options?: never) => unknown;
 	registerProvider(id: string, config: unknown): void;
 }
@@ -186,7 +186,7 @@ export function buildZenTargets(opts: ZenTargetOpts): DesiredProvider[] {
 				// Real credential injected per-request by the custom streamSimple.
 				apiKey: "zenfree-managed",
 				api: group.api,
-				headers: { ...opts.contract.headers, ...opts.extraHeaders },
+				headers: { ...opts.contract.headers },
 				models: models as ProviderModel[],
 				streamSimple: opts.streamSimple,
 			});
@@ -347,9 +347,11 @@ export default function clinefree(pi: ExtensionAPI): void {
 	let zenCurrentContract: ZenContractResult =
 		zenfreeState.readCache<ZenContractResult>("contract.json") ?? BAKED_IN_ZEN_CONTRACT;
 
+	const zenSidecar = createZenSidecar({ notify });
 	const zenStream = createZenfreeStream({
 		getCredential: () => zenConfig.auth,
 		getContract: () => zenCurrentContract,
+		ensureSidecar: () => zenSidecar.ensureSidecar(),
 		onInvalidated: () => {
 			zenConfig.auth = undefined;
 			try {
@@ -406,7 +408,6 @@ export default function clinefree(pi: ExtensionAPI): void {
 			resolve: (id) => zenSource.resolveCapabilities(id),
 			resolveTransport: (id) => zenSource.resolveTransport(id),
 			contract: zenCurrentContract,
-			extraHeaders: zenSource.configHeaders(),
 			streamSimple: zenStream as never,
 			registerProvider: (id, config) => (pi as unknown as PiLike).registerProvider(id, config),
 		});
@@ -425,7 +426,6 @@ export default function clinefree(pi: ExtensionAPI): void {
 					resolve: (id) => zenSource.resolveCapabilities(id),
 					resolveTransport: (id) => zenSource.resolveTransport(id),
 					contract: zenCurrentContract,
-					extraHeaders: zenSource.configHeaders(),
 					streamSimple: zenStream as never,
 					registerProvider: (id, config) => (pi as unknown as PiLike).registerProvider(id, config),
 				});

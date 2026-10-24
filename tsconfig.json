@@ -13,5 +13,5 @@
 		"skipLibCheck": true
 	},
 	"include": ["*.ts", "sources/**/*.ts"],
-	"exclude": ["test-fixtures", "node_modules"]
+	"exclude": ["test-fixtures", "node_modules", "zen-sidecar.ts"]
 }

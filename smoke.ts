@@ -15,7 +15,8 @@ import { DEFAULT_CAPABILITIES, resolveCapabilities } from "./capabilities.ts";
 import { fetchModelsDevOpenRouter, fetchVercelGateway } from "./feeds.ts";
 import { createClineSource } from "./sources/cline.ts";
 import { createZenSource } from "./sources/opencode.ts";
-import { createMessageId, createSessionId } from "./sources/opencode-identity.ts";
+import { createMessageId, createSessionId, zenProjectId } from "./sources/opencode-identity.ts";
+import { createZenSidecar } from "./sidecar.ts";
 import { fmtTokens } from "./tui.ts";
 
 const key = process.env.CLINEFREE_SMOKE_KEY;
@@ -120,7 +121,8 @@ if (zenKey) {
 		zenIds.length > 0,
 		`${zenIds.length} free · ${zenIds.join(", ")}`,
 	);
-	report("zen gateway url", !!zenSource.configBaseUrl(), zenSource.configBaseUrl() ?? "unknown");
+	const gatewayBase = zenSource.configBaseUrl() ?? zenContract.baseUrl;
+	report("zen gateway url", !!gatewayBase, `${gatewayBase}${zenSource.configBaseUrl() ? "" : " (from contract)"}`);
 	const orgHeaders = zenSource.configHeaders();
 	if (orgHeaders && Object.keys(orgHeaders).length > 0) {
 		report("zen prescribed headers", true, Object.keys(orgHeaders).join(", "));
@@ -140,11 +142,77 @@ if (zenKey) {
 	}
 	report("zen transport split", zenIds.length > 0, `${responsesIds.length} responses-transport: ${responsesIds.join(", ") || "none"}`);
 
-	// z5. One tiny streaming chat with the agentic shape (stream + stub tools).
+	const keylessHeaders = (session: string) => ({
+		"Content-Type": "application/json",
+		Authorization: "Bearer public",
+		...zenContract.headers,
+		"x-opencode-session": session,
+		"x-opencode-session-id": session,
+		"x-session-affinity": session,
+		"X-Session-Id": session,
+		"x-opencode-project": zenProjectId(),
+		"x-opencode-request": createMessageId(),
+	});
+	const keylessBody = (session: string) => ({
+		stream: true,
+		max_tokens: 256,
+		stream_options: { include_usage: true },
+		prompt_cache_key: session,
+	});
+	// z5b. Sidecar e2e — the same keyless shape through the Bun sidecar. Zen's
+	//      gateway admits only Bun-shaped TLS clients (see sidecar.ts), so this
+	//      is the transport the extension itself uses; the direct z5 probe above
+	//      documents the 429 the TLS gate serves everything else.
+	{
+		const zenSidecar = createZenSidecar({ notify: (m) => console.log(`  [sidecar] ${m}`) });
+		const sidecarBase = await zenSidecar.ensureSidecar();
+		if (!sidecarBase) {
+			report("zen chat (sidecar)", false, "sidecar unavailable (bun missing?) — the extension will fall back to direct requests");
+		} else {
+			// Free quota is metered per model, so probe up to three lineup models and
+			// pass when any one streams; per-model 429s are reported, not hidden.
+			const candidates = zenIds.filter((id) => !id.startsWith("muse-spark-")).slice(0, 3);
+			const outcomes: string[] = [];
+			let passed = false;
+			for (const modelId of candidates) {
+				if (passed) break;
+				try {
+					const session = createSessionId();
+					const response = await fetch(`${sidecarBase}/v1/chat/completions`, {
+						method: "POST",
+						headers: keylessHeaders(session),
+						body: JSON.stringify({
+							model: modelId,
+							messages: [{ role: "user", content: "reply with the single word: pong" }],
+							...keylessBody(session),
+							tools: ["read", "shell", "edit", "write"].map((name) => ({
+								type: "function",
+								function: { name, description: name, parameters: { type: "object", properties: {} } },
+							})),
+						}),
+						signal: AbortSignal.timeout(60_000),
+					});
+					const text = await response.text();
+					const ok = response.ok && text.includes("data:");
+					outcomes.push(`${modelId}: HTTP ${response.status}`);
+					if (ok) passed = true;
+				} catch (error) {
+					outcomes.push(`${modelId}: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			}
+			report("zen chat (sidecar)", passed, outcomes.join(" · "));
+		}
+		zenSidecar.stop();
+	}
+
+	// z4b. Control — the pre-2026-10-24 keyed shape (workspace key + org-id, no
+	//      v2.1 identity headers). Expected to draw the 429 FreeUsageLimitError
+	//      that motivated the keyless switch; if it ever passes again, the
+	//      workspace free allowance has recovered and the switch can be revisited.
 	const completionsModel = zenIds.find((id) => !id.startsWith("muse-spark-"));
-	if (completionsModel) {
+	if (completionsModel && zenSource.configBaseUrl()) {
 		try {
-			const response = await fetch(`${zenSource.configBaseUrl()}/chat/completions`, {
+			const response = await fetch(`${gatewayBase}/chat/completions`, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -167,32 +235,57 @@ if (zenKey) {
 				signal: AbortSignal.timeout(60_000),
 			});
 			const text = await response.text();
-			const ok = response.ok && text.includes("data:");
-			report(`zen chat (streaming, ${completionsModel})`, ok, `HTTP ${response.status} · ${text.slice(0, 80).replace(/\n/g, " ")}`);
+			const expected = response.status === 429 && /FreeUsageLimit/i.test(text);
+			report(`zen control (keyed shape, expect 429)`, expected, `HTTP ${response.status} · ${text.slice(0, 90).replace(/\n/g, " ")}`);
 		} catch (error) {
-			report(`zen chat (streaming, ${completionsModel})`, false, error instanceof Error ? error.message : String(error));
+			report(`zen control (keyed shape, expect 429)`, false, error instanceof Error ? error.message : String(error));
 		}
 	}
 
-	// z6. Responses-API probe for the zenfree.res transport (agentic shape required —
-	//    bare /responses pings are 403-gated exactly like bare chat pings).
+	// z5. One tiny streaming chat with the keyless v2.1.4 shape (Bearer public,
+	//     session-identity headers, prompt_cache_key) + agentic body.
+	// Shared keyless identity for the z7 reasoning probes.
+	const reasoningSession = createSessionId();
+	const reasoningHeaders = keylessHeaders(reasoningSession);
+	if (completionsModel) {
+		try {
+			const session = createSessionId();
+			const response = await fetch(`${gatewayBase}/chat/completions`, {
+				method: "POST",
+				headers: keylessHeaders(session),
+				body: JSON.stringify({
+					model: completionsModel,
+					messages: [{ role: "user", content: "reply with the single word: pong" }],
+					...keylessBody(session),
+					tools: ["read", "shell", "edit", "write"].map((name) => ({
+						type: "function",
+						function: { name, description: name, parameters: { type: "object", properties: {} } },
+					})),
+				}),
+				signal: AbortSignal.timeout(60_000),
+			});
+			const text = await response.text();
+			const ok = response.ok && text.includes("data:");
+			report(`zen chat (keyless shape, ${completionsModel})`, ok, `HTTP ${response.status} · ${text.slice(0, 80).replace(/\n/g, " ")}`);
+		} catch (error) {
+			report(`zen chat (keyless shape, ${completionsModel})`, false, error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	// z6. Responses-API probe for the zenfree.res transport (keyless shape; the
+	//    agentic body is required — bare /responses pings are 403-gated).
 	const responsesModel = responsesIds[0];
 	if (responsesModel) {
 		try {
-			const response = await fetch(`${zenSource.configBaseUrl()}/responses`, {
+			const session = createSessionId();
+			const response = await fetch(`${gatewayBase}/responses`, {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${zenKey}`,
-					...zenContract.headers,
-					...zenSource.configHeaders(),
-					"x-opencode-session": createSessionId(),
-					"x-opencode-request": createMessageId(),
-				},
+				headers: keylessHeaders(session),
 				body: JSON.stringify({
 					model: responsesModel,
 					input: "reply with the single word: pong",
 					stream: true,
+					prompt_cache_key: session,
 					tools: ["read", "shell", "edit", "write"].map((name) => ({
 						type: "function",
 						name,
@@ -224,12 +317,6 @@ if (zenKey) {
 		const effortModel = findCompletions((c) => (c.effortValues?.length ?? 0) > 0);
 		const toggleModel = findCompletions((c) => c.toggle);
 		const genericModel = findCompletions((c) => c.reasoning && !c.toggle && (c.effortValues?.length ?? 0) === 0);
-		const reasoningHeaders = {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${zenKey}`,
-			...zenContract.headers,
-			...zenSource.configHeaders(),
-		};
 		const chatProbes: { label: string; id: string; effort: string }[] = [];
 		if (genericModel) chatProbes.push({ label: `${genericModel} reasoning_effort=minimal`, id: genericModel, effort: "minimal" });
 		if (toggleModel) {
@@ -242,14 +329,12 @@ if (zenKey) {
 		}
 		for (const probe of chatProbes) {
 			try {
-				const response = await fetch(`${zenSource.configBaseUrl()}/chat/completions`, {
+				const response = await fetch(`${gatewayBase}/chat/completions`, {
 					method: "POST",
 					headers: { ...reasoningHeaders, "x-opencode-session": createSessionId(), "x-opencode-request": createMessageId() },
 					body: JSON.stringify({
 						model: probe.id,
-						messages: [{ role: "user", content: "reply with the single word: pong" }],
-						stream: true,
-						max_tokens: 256,
+						...keylessBody(reasoningSession),
 						reasoning_effort: probe.effort,
 						tools: chatTools,
 					}),
@@ -270,20 +355,14 @@ if (zenKey) {
 	if (responsesModel) {
 		const responsesEffort = zenSource.resolveCapabilities(responsesModel).effortValues?.[0] ?? "high";
 		try {
-			const response = await fetch(`${zenSource.configBaseUrl()}/responses`, {
+			const response = await fetch(`${gatewayBase}/responses`, {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${zenKey}`,
-					...zenContract.headers,
-					...zenSource.configHeaders(),
-					"x-opencode-session": createSessionId(),
-					"x-opencode-request": createMessageId(),
-				},
+				headers: { ...reasoningHeaders, "x-opencode-session": createSessionId(), "x-opencode-request": createMessageId() },
 				body: JSON.stringify({
 					model: responsesModel,
 					input: "reply with the single word: pong",
 					stream: true,
+					prompt_cache_key: reasoningSession,
 					reasoning: { effort: responsesEffort, summary: "auto" },
 					include: ["reasoning.encrypted_content"],
 					tools: ["read", "shell", "edit", "write"].map((name) => ({

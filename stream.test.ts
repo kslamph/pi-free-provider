@@ -49,8 +49,9 @@ vi.mock("./auth.ts", async (importOriginal) => {
 
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import { refreshClineToken } from "./auth.ts";
-import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation, ZEN_PAD_EXEC_TOOLS, ZEN_PAD_READ_TOOL } from "./stream.ts";
+import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation, ZEN_PAD_EXEC_TOOLS, ZEN_PAD_READ_TOOL, type ZenStreamDeps } from "./stream.ts";
 import { BAKED_IN_ZEN_CONTRACT, type ZenContractResult } from "./sources/opencode-contract.ts";
+import { ZEN_OFFICIAL_SYSTEM_PROMPT } from "./sources/opencode-system-prompt.ts";
 import type { ContractResult } from "./contract.ts";
 import type { Credential } from "./state.ts";
 
@@ -223,6 +224,7 @@ function zenDeps(cred: Credential | undefined) {
 		getContract: () => zenContract,
 		onInvalidated: vi.fn(),
 		onVersionStale: vi.fn(),
+		ensureSidecar: () => Promise.resolve(undefined),
 		notify: vi.fn(),
 	};
 }
@@ -232,18 +234,28 @@ function implsFor(completions: ReturnType<typeof fakeImpl>, responses: ReturnTyp
 }
 
 describe("createZenfreeStream", () => {
-	it("injects Authorization, identity headers, and the contract UA", async () => {
+	it("sends the keyless v2.1.4 shape: public bearer, affinity headers, project id", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
 		const stream = createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }));
 		const events = await collect(stream(zenModelCompletions, zenContext));
 		expect(events.map((e) => e.type)).toEqual(["start", "done"]);
-		const headers = impl.calls[0]!.options.headers as Record<string, string>;
-		expect(headers.Authorization).toBe("Bearer oc_sk-x");
+		const options = impl.calls[0]!.options as { apiKey?: string; headers: Record<string, string> };
+		const headers = options.headers;
+		// Keyless: the workspace key never reaches the gateway (its free quota is
+		// exhausted server-side); `Bearer public` is the official keyless sentinel.
+		expect(headers.Authorization).toBe("Bearer public");
+		expect(options.apiKey).toBe("public");
 		expect(headers["x-opencode-client"]).toBe("cli");
 		expect(headers["User-Agent"]).toBe("opencode/latest/2.0.18/cli");
 		expect(headers["x-opencode-session"]).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
 		expect(headers["x-opencode-request"]).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+		// v2.1 identity set: session id + affinity pair + project, all sharing the
+		// conversation session id (affinity = session id for an un-parented client).
+		expect(headers["x-opencode-session-id"]).toBe(headers["x-opencode-session"]);
+		expect(headers["x-session-affinity"]).toBe(headers["x-opencode-session"]);
+		expect(headers["X-Session-Id"]).toBe(headers["x-opencode-session"]);
+		expect(headers["x-opencode-project"]).toMatch(/^[0-9a-f]{40}$/);
 
 		// session stable across calls; request id stable for the same turn
 		await collect(stream(zenModelCompletions, zenContext));
@@ -259,6 +271,21 @@ describe("createZenfreeStream", () => {
 		await collect(stream(zenModelCompletions, newTurnContext));
 		const fourth = impl.calls[3]!.options.headers as Record<string, string>;
 		expect(fourth["x-opencode-request"]).not.toBe(third["x-opencode-request"]);
+	});
+
+	it("routes through the bun sidecar by swapping the model baseUrl", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps: ZenStreamDeps = {
+			...zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }),
+			ensureSidecar: () => Promise.resolve("http://127.0.0.1:9911"),
+		};
+		const directModel = { id: "zenfree/big-pickle", api: "openai-completions", baseUrl: "https://opencode.ai/inference/openai/v1" } as never;
+		await collect(createZenfreeStream(deps)(directModel, zenContext));
+		expect((impl.calls[0]!.model as { baseUrl: string }).baseUrl).toBe("http://127.0.0.1:9911");
+		// No sidecar: the model's own baseUrl is used unchanged.
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(directModel, zenContext));
+		expect((impl.calls[1]!.model as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v1");
 	});
 
 	it("routes a responses-api model through the responses impl with identity headers", async () => {
@@ -389,7 +416,7 @@ describe("zenfree agentic-shape padding", () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
 		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, oneTool));
-		expect(declaredTools(impl.calls[0]!.context)).toEqual(["todowrite", ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
+		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0], "todowrite"]);
 		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
 	});
 
@@ -397,23 +424,39 @@ describe("zenfree agentic-shape padding", () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
 		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, noExec));
-		expect(declaredTools(impl.calls[0]!.context)).toEqual(["read", "grep", ZEN_PAD_EXEC_TOOLS[0]]);
+		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_EXEC_TOOLS[0], "read", "grep"]);
 	});
 
 	it("adds both roles when the session's tools are neither reader nor exec", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
 		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, noReader));
-		expect(declaredTools(impl.calls[0]!.context)).toEqual(["write", "edit", ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
+		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0], "write", "edit"]);
 		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
 	});
 
-	it("leaves an already agentic request untouched", async () => {
+	it("keeps an already agentic request's tools and adds only the system pad", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
 		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, agentic));
-		expect(impl.calls[0]!.context).toBe(agentic);
+		const sent = (impl.calls[0]!.context as { messages: { role: string; content?: unknown }[] }).messages;
+		expect(sent[0]!.content).toBe(ZEN_OFFICIAL_SYSTEM_PROMPT);
+		expect(sent.slice(1)).toEqual((agentic as { messages: unknown[] }).messages);
+		expect(declaredTools(impl.calls[0]!.context)).toEqual(["read", "bash", "edit"]);
 		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
+	});
+
+	it("forwards the context untouched when the official prompt already leads", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const official = {
+			messages: [
+				{ role: "system", content: ZEN_OFFICIAL_SYSTEM_PROMPT, timestamp: 0, toolsAdded: ["read", "bash"].map(tool) },
+				{ role: "user", content: "hi", timestamp: 1 },
+			],
+		} as never;
+		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, official));
+		expect(impl.calls[0]!.context).toBe(official);
 	});
 
 	it("never forces tool_choice on the responses transport (only \"auto\" is accepted there)", async () => {
@@ -424,13 +467,14 @@ describe("zenfree agentic-shape padding", () => {
 		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
 	});
 
-	it("keeps the original prompt and message order when padding", async () => {
+	it("prepends the official prompt ahead of the original messages when padding", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
 		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, toolless));
 		const sent = (impl.calls[0]!.context as { messages: { role: string; content?: unknown }[] }).messages;
-		expect(sent.map((m) => m.role)).toEqual(["system", "user"]);
-		expect(sent[0]!.content).toBe("summarize this");
+		expect(sent.map((m) => m.role)).toEqual(["system", "system", "user"]);
+		expect(sent[0]!.content).toBe(ZEN_OFFICIAL_SYSTEM_PROMPT);
+		expect(sent[1]!.content).toBe("summarize this");
 	});
 
 	it("unwraps a pad call the model made anyway: its text survives, the call does not", async () => {

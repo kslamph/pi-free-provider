@@ -207,7 +207,8 @@ function notifyInvalid(deps: ClinefreeStreamDeps): void {
 // ── zenfree stream (spec §zen-6) ─────────────────────────────────────────────
 
 import { createConversationIdentity } from "./sources/opencode-identity.ts";
-import { turnKeyOf } from "./sources/opencode-identity.ts";
+import { ZEN_OFFICIAL_SYSTEM_PROMPT } from "./sources/opencode-system-prompt.ts";
+import { turnKeyOf, zenProjectId } from "./sources/opencode-identity.ts";
 import type { ZenContractResult } from "./sources/opencode-contract.ts";
 
 const zenIdentity = createConversationIdentity();
@@ -224,6 +225,9 @@ export interface ZenStreamDeps {
 	onInvalidated(): void;
 	/** The gateway 426'd our client version — force a contract re-check. */
 	onVersionStale(): void;
+	/** Resolve the local Bun sidecar base URL (zen TLS-fingerprint gate; see sidecar.ts).
+	 * Undefined = no sidecar — send directly from Node. */
+	ensureSidecar(): Promise<string | undefined>;
 	notify(message: string): void;
 }
 
@@ -285,21 +289,36 @@ export interface ZenPad {
  * Returns undefined when the request is already agentic — it is then forwarded
  * untouched, so its prompt cache stays warm.
  */
-export function padZenRequest(context: TranscriptContext): ZenPad | undefined {
+export function padZenRequest(context: TranscriptContext): ZenPad {
 	const declared = declaredToolNames(context.messages);
 	const missing: string[] = [];
 	if (!declared.has(ZEN_PAD_READ_TOOL)) missing.push(ZEN_PAD_READ_TOOL);
 	if (!ZEN_PAD_EXEC_TOOLS.some((name) => declared.has(name))) missing.push(ZEN_PAD_EXEC_TOOLS[0]);
-	if (missing.length === 0) return undefined;
 
-	const pads: Tool[] = missing.map((name) => ({ ...PAD_TOOL, name }));
+	// System-prompt pad: the free tier fingerprints the request body for
+	// OpenCode's official system prompt (2026-10-24 bisect: truncated 6/12KB,
+	// prefixed-without, and same-size synthetic prompts all draw 429
+	// FreeUsageLimitError; the intact prompt passes, even as a separate leading
+	// system message). pi's own system prompt never matches, so every request
+	// carries the official prompt ahead of it — identical bytes every time, so
+	// prefix caching absorbs the ~5.2K-token cost.
 	const first = context.messages[0];
-	// Declare the placeholders on the leading system message (that is where the
-	// adapters read the tool list from); a transcript without one gets a new head.
-	const messages: Message[] =
-		first?.role === "system"
-			? [{ ...first, toolsAdded: [...(first.toolsAdded ?? []), ...pads] }, ...context.messages.slice(1)]
-			: [{ role: "system", content: "", toolsAdded: pads, timestamp: 0 }, ...context.messages];
+	const needsSystemPad = !(first?.role === "system" && first.content === ZEN_OFFICIAL_SYSTEM_PROMPT);
+	if (missing.length === 0 && !needsSystemPad) {
+		return { context, names: [], toolless: declared.size === 0 };
+	}
+
+	// The official-prompt message leads; tool placeholders are declared on it
+	// (that is where the adapters read the tool list from) so the original
+	// transcript stays untouched behind the pad.
+	const pads: Tool[] = missing.map((name) => ({ ...PAD_TOOL, name }));
+	const head: Message = {
+		role: "system",
+		content: ZEN_OFFICIAL_SYSTEM_PROMPT,
+		...(pads.length > 0 ? { toolsAdded: pads } : {}),
+		timestamp: 0,
+	};
+	const messages: Message[] = [head, ...context.messages];
 
 	return { context: { messages } as TranscriptContext, names: missing, toolless: declared.size === 0 };
 }
@@ -370,25 +389,46 @@ export function createZenfreeStream(deps: ZenStreamDeps) {
 				const contract = deps.getContract();
 				const captured = { status: 0 };
 				const impl = getApiProvider(model.api) ?? fallback;
+				// Zen's gateway admits only Bun-shaped TLS clients (sidecar.ts); route
+				// through the local relay when available, else send directly from Node.
+				const sidecarBase = await deps.ensureSidecar().catch(() => undefined);
+				const target = (
+					sidecarBase ? ({ ...model, baseUrl: sidecarBase } as typeof model) : model
+				) as Model<Api>;
 				const pad = padZenRequest(context);
 				const padChoice = pad ? padToolChoice(model, pad, options) : undefined;
+				// Keyless v2.1.4 shape (2026-10-24): the workspace-keyed free quota is
+				// exhausted server-side (429 FreeUsageLimitError "Subscribe to OpenCode
+				// Go"), while the official client with no opencode credential sends
+				// `Authorization: Bearer public` and rides the anonymous per-IP bucket
+				// (console handler: `rawZenApiKey === "public" → undefined`). Mirror it:
+				// public bearer, the v2.1 session-identity headers (session-id +
+				// affinity pair + project, sharing the conversation session id), and no
+				// org-id (keyless clients send none). The workspace key stays configured
+				// for lineup/config sync — it just never reaches the gateway.
+				const session = zenIdentity.sessionId();
+				const request = zenIdentity.requestId(turnKeyOf(context.messages));
 				const attemptOptions: SimpleStreamOptions = {
 					...options,
 					...(padChoice !== undefined ? { toolChoice: padChoice } : {}),
-					apiKey: cred.apiKey,
+					apiKey: "public",
 					headers: {
 						...options?.headers,
 						...contract.headers,
-						Authorization: `Bearer ${cred.apiKey}`,
-						"x-opencode-session": zenIdentity.sessionId(),
-						"x-opencode-request": zenIdentity.requestId(turnKeyOf(context.messages)),
+						Authorization: "Bearer public",
+						"x-opencode-session": session,
+						"x-opencode-session-id": session,
+						"x-session-affinity": session,
+						"X-Session-Id": session,
+						"x-opencode-project": zenProjectId(),
+						"x-opencode-request": request,
 					},
 					onResponse: (response) => {
 						captured.status = response.status;
 					},
 				};
 
-				const sub = impl.streamSimple(model, pad?.context ?? context, attemptOptions);
+				const sub = impl.streamSimple(target, pad?.context ?? context, attemptOptions);
 				const buffered: AssistantMessageEvent[] = [];
 				let relayed = false;
 
