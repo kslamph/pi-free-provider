@@ -147,6 +147,17 @@ export async function fetchModelsDevModels(providerId: string, fetcher: typeof f
 	return reduceModelsDevProvider(await response.json(), providerId);
 }
 
+/** Fetch one snapshot and reduce several provider blocks without duplicate requests. */
+export async function fetchModelsDevProviders(
+	providerIds: string[],
+	fetcher: typeof fetch = fetch,
+): Promise<Record<string, Record<string, FeedEntry>>> {
+	const response = await fetcher(MODELS_DEV_URL);
+	if (!response.ok) throw new Error(`models.dev fetch failed: HTTP ${response.status}`);
+	const payload = await response.json();
+	return Object.fromEntries(providerIds.map((id) => [id, reduceModelsDevProvider(payload, id)]));
+}
+
 /** Fetch and reduce the models.dev openrouter block. Throws on !ok. */
 export async function fetchModelsDevOpenRouter(fetcher: typeof fetch = fetch): Promise<Record<string, FeedEntry>> {
 	return fetchModelsDevModels("openrouter", fetcher);

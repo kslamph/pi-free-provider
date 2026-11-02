@@ -342,6 +342,9 @@ export default function clinefree(pi: ExtensionAPI): void {
 	}
 
 	const zenSource: ZenSource = createZenSource({
+		// OpenCode Go's console connection exposes the Go-specific lineup
+		// (including contributor models) under the opencode-go provider block.
+		providerId: "opencode-go",
 		minIntervalMs: zenConfig.sync.minIntervalMinutes * 60_000,
 	});
 	let zenCurrentContract: ZenContractResult =

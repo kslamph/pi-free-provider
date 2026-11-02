@@ -109,13 +109,13 @@ function toModelEntry(raw: unknown): ZenModelEntry | undefined {
 }
 
 /** Lenient reducer for the console config payload. */
-export function parseConsoleConfig(payload: unknown): ZenConsoleConfig {
+export function parseConsoleConfig(payload: unknown, providerId = "opencode"): ZenConsoleConfig {
 	if (!payload || typeof payload !== "object") return { models: {} };
 	const providers = (payload as Record<string, unknown>).providers;
 	if (!providers || typeof providers !== "object") return { models: {} };
-	const opencode = (providers as Record<string, unknown>).opencode;
-	if (!opencode || typeof opencode !== "object") return { models: {} };
-	const provider = opencode as Record<string, unknown>;
+	const selected = (providers as Record<string, unknown>)[providerId] ?? (providers as Record<string, unknown>).opencode;
+	if (!selected || typeof selected !== "object") return { models: {} };
+	const provider = selected as Record<string, unknown>;
 	const models: Record<string, ZenModelEntry> = {};
 	const rawModels = provider.models;
 	if (rawModels && typeof rawModels === "object" && !Array.isArray(rawModels)) {
@@ -206,14 +206,14 @@ export function composeZenLineup(
  * Fetch the console config with the workspace key. Throws `HTTP 401` on 401
  * (auth validation needs to distinguish it); undefined on other failures.
  */
-export async function fetchConsoleConfig(apiKey: string, fetcher: typeof fetch = fetch): Promise<ZenConsoleConfig | undefined> {
+export async function fetchConsoleConfig(apiKey: string, fetcher: typeof fetch = fetch, providerId = "opencode"): Promise<ZenConsoleConfig | undefined> {
 	try {
 		const response = await fetcher(CONSOLE_CONFIG_URL, {
 			headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
 		});
 		if (response.status === 401 || response.status === 403) throw new Error(`HTTP ${response.status}`);
 		if (!response.ok) return undefined;
-		return parseConsoleConfig(await response.json());
+		return parseConsoleConfig(await response.json(), providerId);
 	} catch (error) {
 		if (error instanceof Error && /^HTTP 40[13]$/.test(error.message)) throw error;
 		return undefined;

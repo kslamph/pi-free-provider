@@ -68,6 +68,8 @@ interface CachedCapabilities {
 }
 
 export interface ZenSourceDeps {
+	/** Console/models.dev provider block to use (OpenCode Go uses opencode-go). */
+	providerId?: string;
 	fetcher?: typeof fetch;
 	now?: () => number;
 	readCache?: <T>(name: string) => T | undefined;
@@ -98,6 +100,7 @@ const EMPTY_STATE: ZenSyncState = { version: 1, timestamps: {} };
 
 export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 	const fetcher = deps.fetcher ?? fetch;
+	const providerId = deps.providerId ?? "opencode";
 	const now = deps.now ?? Date.now;
 	const readCache = deps.readCache ?? ((<T>(name: string) => zenfreeState.readCache<T>(name)) as <T>(name: string) => T | undefined);
 	const writeCache = deps.writeCache ?? ((name: string, data: unknown) => zenfreeState.writeCache(name, data));
@@ -180,7 +183,12 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		let devCatalog: Record<string, FeedEntry> = {};
 		let devFailed = false;
 		try {
-			devCatalog = await fetchModelsDevModels("opencode", fetcher);
+			devCatalog = await fetchModelsDevModels(providerId, fetcher);
+			// Test/older snapshots may not have a provider-specific block; retain
+			// compatibility by falling back to the canonical OpenCode catalog.
+			if (Object.keys(devCatalog).length === 0 && providerId !== "opencode") {
+				devCatalog = await fetchModelsDevModels("opencode", fetcher);
+			}
 		} catch (error) {
 			devFailed = true;
 			const reason = error instanceof Error ? error.message : String(error);
@@ -189,7 +197,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 
 		let config;
 		try {
-			config = await fetchConsoleConfig(authToken, fetcher);
+			config = await fetchConsoleConfig(authToken, fetcher, providerId);
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			warnings.push(
@@ -226,7 +234,10 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		const uncovered = ids.filter((id) => !covered.has(id));
 		if (force || uncovered.length > 0) {
 			try {
-				modelsdev = await fetchModelsDevModels("opencode", fetcher);
+				modelsdev = await fetchModelsDevModels(providerId, fetcher);
+				if (Object.keys(modelsdev).length === 0 && providerId !== "opencode") {
+					modelsdev = await fetchModelsDevModels("opencode", fetcher);
+				}
 				current.modelsdev = modelsdev;
 				current.coveredIds = [...covered, ...ids];
 				current.updatedAt = now();
