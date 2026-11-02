@@ -68,8 +68,8 @@ interface CachedCapabilities {
 }
 
 export interface ZenSourceDeps {
-	/** Console/models.dev provider block to use (OpenCode Go uses opencode-go). */
-	providerId?: string;
+	/** Console/models.dev provider blocks to union (OpenCode Go uses opencode-go). */
+	providerIds?: string[];
 	fetcher?: typeof fetch;
 	now?: () => number;
 	readCache?: <T>(name: string) => T | undefined;
@@ -100,7 +100,7 @@ const EMPTY_STATE: ZenSyncState = { version: 1, timestamps: {} };
 
 export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 	const fetcher = deps.fetcher ?? fetch;
-	const providerId = deps.providerId ?? "opencode";
+	const providerIds = deps.providerIds ?? ["opencode"];
 	const now = deps.now ?? Date.now;
 	const readCache = deps.readCache ?? ((<T>(name: string) => zenfreeState.readCache<T>(name)) as <T>(name: string) => T | undefined);
 	const writeCache = deps.writeCache ?? ((name: string, data: unknown) => zenfreeState.writeCache(name, data));
@@ -183,11 +183,9 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		let devCatalog: Record<string, FeedEntry> = {};
 		let devFailed = false;
 		try {
-			devCatalog = await fetchModelsDevModels(providerId, fetcher);
-			// Test/older snapshots may not have a provider-specific block; retain
-			// compatibility by falling back to the canonical OpenCode catalog.
-			if (Object.keys(devCatalog).length === 0 && providerId !== "opencode") {
-				devCatalog = await fetchModelsDevModels("opencode", fetcher);
+			for (const id of providerIds) {
+				const catalog = await fetchModelsDevModels(id, fetcher);
+				for (const [modelId, entry] of Object.entries(catalog)) if (!devCatalog[modelId]) devCatalog[modelId] = entry;
 			}
 		} catch (error) {
 			devFailed = true;
@@ -195,27 +193,26 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 			warnings.push(`zenfree: models.dev fetch failed (${reason})`);
 		}
 
-		let config;
-		try {
-			config = await fetchConsoleConfig(authToken, fetcher, providerId);
-		} catch (error) {
-			const reason = error instanceof Error ? error.message : String(error);
-			warnings.push(
-				/^HTTP 40[13]$/.test(reason)
-					? `zenfree: config fetch rejected (${reason}) — the workspace key may be invalid`
-					: `zenfree: config fetch failed (${reason}); using cached lineup`,
-			);
+		let composed = { models: {} as Record<string, ZenModelEntry>, headers: undefined as Record<string, string> | undefined, baseUrl: undefined as string | undefined };
+		let configOk = false;
+		for (const id of providerIds) {
+			try {
+				const config = await fetchConsoleConfig(authToken, fetcher, id);
+				if (!config) continue;
+				configOk = true;
+				const part = composeZenLineup(config, devCatalog);
+				composed = { baseUrl: part.baseUrl ?? composed.baseUrl, headers: part.headers ?? composed.headers, models: { ...composed.models, ...part.models } };
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				warnings.push(/^HTTP 40[13]$/.test(reason) ? `zenfree: config fetch rejected (${reason})` : `zenfree: config fetch failed (${reason})`);
+			}
+		}
+		if (!configOk) {
+			warnings.push("zenfree: config fetch failed; using cached lineup");
 			cached = cachedLineup();
 			return lineupIds(withoutDeprecated(cached, devCatalog));
 		}
-		if (!config) {
-			warnings.push("zenfree: config fetch failed (unexpected payload); using cached lineup");
-			cached = cachedLineup();
-			return lineupIds(withoutDeprecated(cached, devCatalog));
-		}
-
-		const composed = composeZenLineup(config, devCatalog);
-		const configDeclaresFree = Object.values(config.models).some((m) => m.free && !m.disabled);
+		const configDeclaresFree = Object.values(composed.models).some((m) => m.free && !m.disabled);
 		if (Object.keys(composed.models).length === 0 && devFailed && !configDeclaresFree) {
 			warnings.push("zenfree: no free models found (config carries none, models.dev unavailable); using cached lineup");
 			cached = cachedLineup();
@@ -234,9 +231,10 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		const uncovered = ids.filter((id) => !covered.has(id));
 		if (force || uncovered.length > 0) {
 			try {
-				modelsdev = await fetchModelsDevModels(providerId, fetcher);
-				if (Object.keys(modelsdev).length === 0 && providerId !== "opencode") {
-					modelsdev = await fetchModelsDevModels("opencode", fetcher);
+				modelsdev = {};
+				for (const id of providerIds) {
+					const catalog = await fetchModelsDevModels(id, fetcher);
+					for (const [modelId, entry] of Object.entries(catalog)) if (!modelsdev[modelId]) modelsdev[modelId] = entry;
 				}
 				current.modelsdev = modelsdev;
 				current.coveredIds = [...covered, ...ids];

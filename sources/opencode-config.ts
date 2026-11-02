@@ -34,6 +34,8 @@ export const CONSOLE_CONFIG_URL = "https://opencode.ai/console/api/v2/config";
 export const DEPRECATED_STATUS = "deprecated";
 
 export interface ZenModelEntry {
+	/** Gateway base URL for this provider/model. */
+	baseUrl?: string;
 	name?: string;
 	free: boolean;
 	limit?: { context?: number; output?: number };
