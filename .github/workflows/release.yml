@@ -12,19 +12,13 @@ name: Release to npm
 #
 # The binding must be created before the first release run and complete its
 # first successful publish within 2 days, after which it is locked to this
-# repository. This repository is PRIVATE: trusted publishing still works, but
-# npm does not attach provenance attestations to builds from private repos.
-# That is the only thing lost — the package itself publishes normally.
-#
-# Fallback (not used here): a granular token in the NPM_TOKEN secret with
-# `env: NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`. Note that 2FA-bypass tokens
-# lose direct publish in January 2027, so OIDC is the durable path.
-#
-# Private-repo Actions minutes are billed to the plan's included quota
-# (2,000 min/month on Free); a release run costs well under a minute.
+# repository. This repository is PUBLIC, so every publish also gets an npm
+# provenance attestation (SLSA) linking the tarball to this workflow run —
+# nothing extra to configure.
 #
 # Manual runs from the Actions tab are supported; re-runs are safe because an
-# already-published version is skipped.
+# already-published version is skipped. Actions minutes are free for public
+# repositories.
 
 on:
   push:
@@ -79,7 +73,7 @@ jobs:
       - name: Validate tarball contents
         run: |
           npm pack --dry-run 2>&1 | tee /tmp/pack.txt
-          for f in index.ts sidecar.ts zen-sidecar.ts LICENSE README.md; do
+          for f in index.ts sidecar.ts zen-sidecar.ts LICENSE README.md INSTALL.md; do
             if ! grep -qE "[[:space:]]${f}$" /tmp/pack.txt; then
               echo "::error::${f} is missing from the published tarball"
               exit 1

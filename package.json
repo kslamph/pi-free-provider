@@ -1,6 +1,6 @@
 {
 	"name": "pi-free-provider",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "pi extension exposing Cline's free models and OpenCode Zen's free tier as auto-synced providers",
 	"author": "kslamph",
 	"keywords": [
@@ -22,6 +22,10 @@
 		"type": "git",
 		"url": "git+https://github.com/kslamph/pi-free-provider.git"
 	},
+	"homepage": "https://github.com/kslamph/pi-free-provider#readme",
+	"bugs": {
+		"url": "https://github.com/kslamph/pi-free-provider/issues"
+	},
 	"publishConfig": {
 		"access": "public"
 	},
@@ -42,6 +46,7 @@
 		"sidecar.ts",
 		"zen-sidecar.ts",
 		"README.md",
+		"INSTALL.md",
 		"LICENSE"
 	],
 	"peerDependencies": {

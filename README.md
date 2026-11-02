@@ -38,6 +38,8 @@ pi install /path/to/pi-free-provider                 # working checkout
 pi -e npm:pi-free-provider                           # ephemeral, no install
 ```
 
+Pinned versions, git refs and install troubleshooting: [INSTALL.md](./INSTALL.md).
+
 Update or remove:
 
 ```sh
