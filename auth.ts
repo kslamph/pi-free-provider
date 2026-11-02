@@ -240,9 +240,14 @@ export async function runDeviceFlow(
 import { CONSOLE_CONFIG_URL } from "./sources/opencode-config.ts";
 
 export async function validateZenKey(key: string, fetcher: typeof fetch = fetch): Promise<"ok" | "rejected" | "error"> {
+	return validateZenCredential({ mode: "apiKey", apiKey: key }, fetcher);
+}
+
+/** Validate either a workspace API key or OpenCode Console OAuth credential. */
+export async function validateZenCredential(cred: Credential, fetcher: typeof fetch = fetch): Promise<"ok" | "rejected" | "error"> {
 	try {
 		const response = await fetcher(CONSOLE_CONFIG_URL, {
-			headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+			headers: { Authorization: formatZenAuthorization(cred), Accept: "application/json" },
 		});
 		if (response.ok) return "ok";
 		if (response.status === 401 || response.status === 403) return "rejected";
@@ -250,4 +255,39 @@ export async function validateZenKey(key: string, fetcher: typeof fetch = fetch)
 	} catch {
 		return "error";
 	}
+}
+
+const OPENCODE_SERVER = "https://opencode.ai/console";
+const OPENCODE_CLIENT_ID = "opencode-cli";
+export function formatZenAuthorization(cred: Credential): string {
+	return `Bearer ${cred.mode === "apiKey" ? cred.apiKey ?? "" : cred.accessToken ?? ""}`;
+}
+
+/** OpenCode Console device-code login, matching packages/core/src/plugin/provider/opencode.ts. */
+export async function runOpenCodeDeviceFlow(options: DeviceFlowOptions = {}): Promise<Credential> {
+	const fetcher = options.fetcher ?? fetch;
+	const onStatus = options.onStatus ?? (() => {});
+	const deviceRes = await fetcher(`${OPENCODE_SERVER}/auth/device/code`, {
+		method: "POST", headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ client_id: OPENCODE_CLIENT_ID, supports_org_scope: true }),
+		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+	});
+	const device = (await deviceRes.json().catch(() => ({}))) as { device_code?: string; user_code?: string; verification_uri_complete?: string; expires_in?: number; interval?: number };
+	if (!deviceRes.ok || !device.device_code || !device.user_code) throw new Error(`OpenCode device authorization failed: HTTP ${deviceRes.status}`);
+	onStatus(`Open ${device.verification_uri_complete ?? `${OPENCODE_SERVER}/device`} (code ${device.user_code})`);
+	const deadline = (options.now ?? Date.now)() + (device.expires_in ?? 300) * 1000;
+	let wait = Math.max(1, device.interval ?? 5);
+	while ((options.now ?? Date.now)() <= deadline) {
+		const poll = await fetcher(`${OPENCODE_SERVER}/auth/device/token`, {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: device.device_code, client_id: OPENCODE_CLIENT_ID }),
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+		});
+		const token = (await poll.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; expires_in?: number; error?: string };
+		if (poll.ok && token.access_token && token.refresh_token) return { mode: "oauth", accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: Date.now() + (token.expires_in ?? 3600) * 1000 };
+		if (token.error !== "authorization_pending" && token.error !== "slow_down") throw new Error(`OpenCode authorization failed: ${token.error ?? `HTTP ${poll.status}`}`);
+		await (options.sleepFn ?? defaultSleep)(wait * 1000);
+		if (token.error === "slow_down") wait += 5;
+	}
+	throw new Error("OpenCode device authorization timed out");
 }

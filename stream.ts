@@ -22,7 +22,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
-import { formatAuthorization, isTokenStale, refreshClineToken } from "./auth.ts";
+import { formatAuthorization, formatZenAuthorization, isTokenStale, refreshClineToken } from "./auth.ts";
 import type { ContractResult } from "./contract.ts";
 import type { Credential } from "./state.ts";
 
@@ -380,10 +380,19 @@ export function createZenfreeStream(deps: ZenStreamDeps) {
 
 		void (async () => {
 			try {
-				const cred = deps.getCredential();
-				if (!cred?.apiKey) {
-					emitError(out, model, "zenfree: no workspace key configured — run /zenfree to add one");
+				let cred = deps.getCredential();
+				if (!cred) {
+					emitError(out, model, "zenfree: no OpenCode credential configured — run /zenfree to sign in");
 					return;
+				}
+				if (cred.mode === "oauth" && cred.refreshToken && isTokenStale(cred)) {
+					const response = await fetch("https://opencode.ai/console/auth/device/token", {
+						method: "POST", headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ grant_type: "refresh_token", refresh_token: cred.refreshToken, client_id: "opencode-cli" }),
+					});
+					if (!response.ok) throw new Error(`OpenCode token refresh failed: HTTP ${response.status}`);
+					const token = (await response.json()) as { access_token: string; refresh_token: string; expires_in?: number };
+					cred = { ...cred, accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: Date.now() + (token.expires_in ?? 3600) * 1000 };
 				}
 
 				const contract = deps.getContract();
@@ -411,11 +420,11 @@ export function createZenfreeStream(deps: ZenStreamDeps) {
 				const attemptOptions: SimpleStreamOptions = {
 					...options,
 					...(padChoice !== undefined ? { toolChoice: padChoice } : {}),
-					apiKey: "public",
+					apiKey: cred.mode === "oauth" ? formatZenAuthorization(cred).replace(/^Bearer /, "") : "public",
 					headers: {
 						...options?.headers,
 						...contract.headers,
-						Authorization: "Bearer public",
+						Authorization: cred.mode === "oauth" ? formatZenAuthorization(cred) : "Bearer public",
 						"x-opencode-session": session,
 						"x-opencode-session-id": session,
 						"x-session-affinity": session,

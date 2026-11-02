@@ -280,11 +280,12 @@ export interface ZenTuiDeps {
 	modelRows(): ModelRow[];
 	history(): { added: string[]; removed: string[]; warnings: string[] } | undefined;
 	setApiKey(key: string): Promise<{ ok: boolean; detail: string }>;
+	deviceFlow(onStatus: (message: string) => void): Promise<{ ok: boolean; detail: string }>;
 	clearCredential(): void;
 	notify(message: string): void;
 }
 
-/** /zenfree — status, models, auth (key only); press r in status to refresh. */
+/** /zenfree — status, models, auth; press r in status to refresh. */
 export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void {
 	pi.registerCommand("zenfree", {
 		description: "OpenCode Zen free models: status, models, auth",
@@ -319,17 +320,21 @@ export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void
 				if (choice === "auth") {
 					const authChoice = await selectOne(ctx, "auth", [
 						{ value: "apikey", label: "Paste workspace key" },
-						{ value: "clear", label: "Clear key" },
+						{ value: "oauth", label: "Sign in with OpenCode" },
+						{ value: "clear", label: "Clear credential" },
 					]);
 					if (authChoice === "apikey") {
 						const key = (await ctx.ui.input("OpenCode workspace key", "oc_sk_…"))?.trim();
 						if (!key) continue;
 						const result = await deps.setApiKey(key);
 						deps.notify(result.ok ? `zenfree: key accepted (${result.detail})` : `zenfree: key rejected — ${result.detail}`);
+					} else if (authChoice === "oauth") {
+						const result = await deps.deviceFlow((message) => deps.notify(`zenfree: ${message}`));
+						deps.notify(result.ok ? `zenfree: signed in (${result.detail})` : `zenfree: sign-in failed — ${result.detail}`);
 					} else if (authChoice === "clear") {
-						if (await ctx.ui.confirm("Clear key", "Forget the stored OpenCode workspace key?")) {
+						if (await ctx.ui.confirm("Clear credential", "Forget the stored OpenCode credential?")) {
 							deps.clearCredential();
-							deps.notify("zenfree: key cleared");
+							deps.notify("zenfree: credential cleared");
 						}
 					}
 					continue;

@@ -10,7 +10,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext, Api } from "@earendil-works/pi-ai";
-import { runDeviceFlow, validateCredential } from "./auth.ts";
+import { runDeviceFlow, runOpenCodeDeviceFlow, validateCredential, validateZenCredential } from "./auth.ts";
 import { BAKED_IN_CONTRACT, type ContractResult } from "./contract.ts";
 import { DEFAULT_CONFIG, loadConfig, readCache, saveConfig, writeCache, zenfreeState, type ClinefreeConfig, type Credential } from "./state.ts";
 import { toProviderModel, type ProviderModel } from "./mapping.ts";
@@ -309,7 +309,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 		// zenfree — independent of clinefree (own guard, own try/catch).
 		resetZenConversation(event.reason);
 		if (!zenConfig.auth) {
-			notify("zenfree: no workspace key — run /zenfree to add one");
+			notify("zenfree: no OpenCode credential — run /zenfree to sign in");
 			return;
 		}
 		try {
@@ -474,7 +474,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 			}),
 		history: () => zenfreeState.readCache<{ lastResult?: { added: string[]; removed: string[]; warnings: string[] } }>("state.json")?.lastResult,
 		setApiKey: async (key: string) => {
-			const verdict = await validateZenKey(key);
+			const verdict = await validateZenCredential({ mode: "apiKey", apiKey: key });
 			if (verdict !== "ok") {
 				return { ok: false, detail: verdict === "rejected" ? "rejected by opencode.ai (401/403)" : "network error — try again" };
 			}
@@ -482,6 +482,19 @@ export default function clinefree(pi: ExtensionAPI): void {
 			zenfreeState.saveConfig(zenConfig);
 			void zenSync(true);
 			return { ok: true, detail: "workspace key accepted" };
+		},
+		deviceFlow: async (onStatus: (message: string) => void) => {
+			try {
+				const cred = await runOpenCodeDeviceFlow({ onStatus });
+				const verdict = await validateZenCredential(cred);
+				if (verdict !== "ok") return { ok: false, detail: `rejected after sign-in (${verdict})` };
+				zenConfig.auth = cred;
+				zenfreeState.saveConfig(zenConfig);
+				void zenSync(true);
+				return { ok: true, detail: "OpenCode account accepted" };
+			} catch (error) {
+				return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+			}
 		},
 		clearCredential: () => {
 			zenConfig.auth = undefined;

@@ -168,8 +168,9 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 
 	async function fetchLineup(credential?: Credential): Promise<{ id: string; name?: string }[]> {
 		let cached = cachedLineup();
-		if (!credential?.apiKey) {
-			warnings.push("zenfree: lineup fetch needs a workspace key");
+		const authToken = credential?.mode === "oauth" ? credential.accessToken : credential?.apiKey;
+		if (!authToken) {
+			warnings.push("zenfree: lineup fetch needs an OpenCode credential");
 			return lineupIds(cached);
 		}
 
@@ -188,7 +189,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 
 		let config;
 		try {
-			config = await fetchConsoleConfig(credential.apiKey, fetcher);
+			config = await fetchConsoleConfig(authToken, fetcher);
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			warnings.push(
