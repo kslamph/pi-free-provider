@@ -1,0 +1,130 @@
+name: Release to npm
+
+# Cutting a release:
+#   1. Bump "version" in package.json and commit on the default branch.
+#   2. git tag vX.Y.Z && git push origin vX.Y.Z   (tag must match package.json)
+#
+# Auth: this repository is PRIVATE, so publishing uses a granular npm token
+# stored as the repository secret NPM_TOKEN (Bypass 2FA / Automation-style token
+# scoped to this one package). npm's OIDC "trusted publishing" path is
+# documented for public repositories and npm refuses to attach provenance
+# attestations to builds from private repos, so it is deliberately NOT used
+# here. If the repo is ever made public, switch the publish step to
+#
+#   permissions: { id-token: write }
+#   npm publish --access public --tag "$DIST_TAG"     # no token
+#
+# after binding it once with:
+#   npm trust github pi-free-provider --repo kslamph/pi-free-provider \
+#     --file release.yml --allow-publish
+#
+# Private-repo Actions minutes are billed to the plan's included quota
+# (2,000 min/month on Free); a release run costs well under a minute.
+#
+# Manual runs from the Actions tab are supported; re-runs are safe because an
+# already-published version is skipped.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org/
+
+      - name: Verify tag matches package.json version (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+          echo "Releasing v${PKG_VERSION}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      # The Bun relay is spawned from disk at run time, so a missing
+      # zen-sidecar.ts silently breaks zenfree instead of failing loudly.
+      - name: Validate tarball contents
+        run: |
+          npm pack --dry-run 2>&1 | tee /tmp/pack.txt
+          for f in index.ts sidecar.ts zen-sidecar.ts LICENSE README.md; do
+            if ! grep -qE "[[:space:]]${f}$" /tmp/pack.txt; then
+              echo "::error::${f} is missing from the published tarball"
+              exit 1
+            fi
+          done
+
+      - name: Skip if this version is already published
+        id: check
+        run: |
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "$PKG@$VER" version 2>/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$PKG@$VER is already published — nothing to do"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require NPM_TOKEN
+        if: steps.check.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::Repository secret NPM_TOKEN is not set (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Pre-release tags (v1.2.0-beta.1, …) go to the `next` dist-tag so
+          # `latest` is never polluted. Manual branch runs publish to `latest`.
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          DIST_TAG="latest"
+          case "$TAG_VERSION" in
+            *-alpha*|*-beta*|*-rc*|*-next*) DIST_TAG="next" ;;
+          esac
+          npm publish --access public --tag "$DIST_TAG"
+
+  github-release:
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
