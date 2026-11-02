@@ -52,6 +52,16 @@ describe("formatStatus", () => {
 	it("says so when no credential is configured", () => {
 		const text = formatStatus({ ...snapshot, authMode: undefined, apiKeyMasked: undefined, accountEmail: undefined }, NOW);
 		expect(text).toMatch(/auth: none/i);
+		expect(text).toMatch(/API key/i);
+	});
+
+	it("shows OAuth as auto-refreshing with the account identity, not a key", () => {
+		const text = formatStatus(
+			{ ...snapshot, authMode: "oauth", apiKeyMasked: undefined, accountEmail: "daniel@example.com" },
+			NOW,
+		);
+		expect(text).toContain("auth: oauth (auto-refreshing · daniel@example.com)");
+		expect(text).not.toContain("sk-");
 	});
 });
 
@@ -126,5 +136,40 @@ describe("formatZenStatus", () => {
 		});
 		expect(text).toContain("baked-in");
 		expect(text).toContain("auth: none");
+		// Both auth methods must be discoverable from the empty state.
+		expect(text).toMatch(/workspace key/i);
+		expect(text).toMatch(/sign in/i);
+	});
+
+	it("renders an OAuth credential as auto-refreshing, with its expiry", () => {
+		const now = 1_000_000_000_000;
+		const text = formatZenStatus({
+			contractSource: "config",
+			timestamps: { lineup: now - 60_000 },
+			cliVersion: "2.0.18",
+			authMode: "oauth",
+			tokenExpiresAt: now + 58 * 60_000,
+			minIntervalMinutes: 30,
+			capabilitiesCoveredCount: 1,
+			capabilitiesLineupCount: 1,
+			freeCount: 1,
+		}, now);
+		expect(text).toContain("auth: oauth (auto-refreshing · expires in 58m)");
+		expect(text).not.toContain("key");
+	});
+
+	it("marks an expired OAuth token rather than pretending it is fresh", () => {
+		const now = 1_000_000_000_000;
+		const text = formatZenStatus({
+			contractSource: "config",
+			timestamps: {},
+			authMode: "oauth",
+			tokenExpiresAt: now - 60_000,
+			minIntervalMinutes: 30,
+			capabilitiesCoveredCount: 0,
+			capabilitiesLineupCount: 0,
+			freeCount: 0,
+		}, now);
+		expect(text).toContain("auth: oauth (auto-refreshing · expired)");
 	});
 });

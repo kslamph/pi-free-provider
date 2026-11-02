@@ -67,6 +67,11 @@ function minutesIn(ts: number | undefined, now: number, intervalMs: number): str
 	return delta <= 0 ? "now (due)" : `in ${delta}m`;
 }
 
+function expiresIn(ts: number, now: number): string {
+	const delta = Math.round((ts - now) / 60_000);
+	return delta <= 0 ? "expired" : `expires in ${delta}m`;
+}
+
 export function formatStatus(s: StatusSnapshot, now = Date.now()): string {
 	const lines: string[] = [];
 	lines.push("clinefree status");
@@ -82,10 +87,12 @@ export function formatStatus(s: StatusSnapshot, now = Date.now()): string {
 	);
 	lines.push(`  lineup: synced ${minutesAgo(s.timestamps.lineup, now)}`);
 	if (s.authMode) {
-		const who = [s.apiKeyMasked, s.accountEmail].filter(Boolean).join(" · ");
+		// Either method is a first-class choice: show which one is live, plus the
+		// identity we have. OAuth stores no key, so name its behaviour instead.
+		const who = [s.authMode === "oauth" ? "auto-refreshing" : s.apiKeyMasked, s.accountEmail].filter(Boolean).join(" · ");
 		lines.push(`  auth: ${s.authMode}${who ? ` (${who})` : ""}`);
 	} else {
-		lines.push("  auth: none — choose Auth to sign in");
+		lines.push("  auth: none — choose Auth to sign in with Cline or paste an API key");
 	}
 	return lines.join("\n");
 }
@@ -102,8 +109,10 @@ export interface ZenStatusSnapshot {
 	timestamps: { version?: number; lineup?: number; capabilities?: number };
 	cliVersion?: string;
 	baseUrl?: string;
-	authMode?: "apiKey";
+	authMode?: "apiKey" | "oauth";
 	apiKeyMasked?: string;
+	/** OAuth only: when the stored access token stops being accepted. */
+	tokenExpiresAt?: number;
 	minIntervalMinutes: number;
 	capabilitiesCoveredCount: number;
 	capabilitiesLineupCount: number;
@@ -125,10 +134,13 @@ export function formatZenStatus(s: ZenStatusSnapshot, now = Date.now()): string 
 	);
 	lines.push(`  lineup: synced ${minutesAgo(s.timestamps.lineup, now)} · ${s.freeCount} free models`);
 	if (s.baseUrl) lines.push(`  gateway: ${s.baseUrl}`);
-	if (s.authMode) {
-		lines.push(`  auth: ${s.authMode} (${s.apiKeyMasked ?? "key"})`);
+	if (s.authMode === "apiKey") {
+		lines.push(`  auth: apiKey (${s.apiKeyMasked ?? "key"})`);
+	} else if (s.authMode === "oauth") {
+		const when = s.tokenExpiresAt === undefined ? "auto-refreshing" : `auto-refreshing · ${expiresIn(s.tokenExpiresAt, now)}`;
+		lines.push(`  auth: oauth (${when})`);
 	} else {
-		lines.push("  auth: none — choose Auth to add a workspace key");
+		lines.push("  auth: none — choose Auth to paste a workspace key or sign in with OpenCode");
 	}
 	return lines.join("\n");
 }

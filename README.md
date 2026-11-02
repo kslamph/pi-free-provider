@@ -61,6 +61,10 @@ Both sources are optional and independent — install one credential, or both.
 | **Sign in with Cline (device flow)** | browser login; tokens refresh and rotate by themselves |
 | **Clear credential** | forget it |
 
+Both routes reach the same free models — a pasted key is not a paid-only path.
+Pick by preference: a key is a single long-lived string, the device flow keeps
+tokens rotating and never stores a key.
+
 ```
 /zenfree → Auth
 ```
@@ -70,6 +74,11 @@ Both sources are optional and independent — install one credential, or both.
 | **Paste workspace key** | a key from [opencode.ai/auth](https://opencode.ai/auth) → workspace Keys |
 | **Sign in with OpenCode** | device-flow login against OpenCode Console |
 | **Clear credential** | forget it |
+
+Both routes are equivalent for the free tier — the key and the console token are
+entitled to the same free models, and both are served through the Bun relay, so
+`bun` is required either way. Pick by preference: a workspace key does not
+expire and is trivial to revoke, the device flow refreshes itself.
 
 Credentials live in `~/.pi/agent/clinefree.json` and `~/.pi/agent/zenfree.json`
 (mode `0600`). They are never written into a pi session, an export, or a repo.
