@@ -58,6 +58,18 @@ describe("resolveBunPath", () => {
 		expect(resolveBunPath(bunEnv(false, { HOME: home }))).toBe(join(home, ".bun/bin/bun"));
 	});
 
+	it("finds extension-qualified Bun and USERPROFILE on Windows", () => {
+		const home = mkdtempSync(join(tmpdir(), "zen-sidecar-windows-"));
+		mkdirSync(join(home, ".bun/bin"), { recursive: true });
+		writeFileSync(join(home, ".bun/bin/bun.exe"), "stub");
+		expect(resolveBunPath({ PATH: "/nonexistent", USERPROFILE: home }, "win32")).toBe(join(home, ".bun/bin/bun.exe"));
+		expect(resolveBunPath({ PATH: "/nonexistent", HOME: "/wrong-home", USERPROFILE: home }, "win32")).toBe(join(home, ".bun/bin/bun.exe"));
+
+		const pathDir = mkdtempSync(join(tmpdir(), "zen-sidecar-windows-path-"));
+		writeFileSync(join(pathDir, "bun.cmd"), "stub");
+		expect(resolveBunPath({ PATH: pathDir }, "win32")).toBe(join(pathDir, "bun.cmd"));
+	});
+
 	it("returns undefined when bun is nowhere", () => {
 		expect(resolveBunPath(bunEnv(false))).toBeUndefined();
 	});

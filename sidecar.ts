@@ -14,7 +14,9 @@
  * only the transport changes. stream.ts swaps the model's baseUrl for the
  * sidecar's loopback URL before delegating to pi's adapter.
  *
- * Bun resolution: $ZENFREE_BUN → `bun` on PATH → ~/.bun/bin/bun. When Bun is
+ * Bun resolution: $ZENFREE_BUN → `bun` on PATH → ~/.bun/bin/bun. On Windows,
+ * extension-qualified names (`bun.exe`, `bun.cmd`) and `%USERPROFILE%` are
+ * checked as well. When Bun is
  * unavailable the manager resolves undefined (stream.ts then sends directly
  * and the user is notified once); a sidecar that crashes or never reports
  * ready is restarted on the next request, throttled by a cooldown so a broken
@@ -54,18 +56,27 @@ const DEFAULT_RETRY_COOLDOWN_MS = 60_000;
 const SIDECAR_SCRIPT = fileURLToPath(new URL("./zen-sidecar.ts", import.meta.url));
 
 /** Resolve the bun binary: $ZENFREE_BUN → PATH → ~/.bun/bin/bun. */
-export function resolveBunPath(env: Record<string, string | undefined>): string | undefined {
+export function resolveBunPath(env: Record<string, string | undefined>, platform = process.platform): string | undefined {
 	const override = env.ZENFREE_BUN?.trim();
 	if (override && existsSync(override)) return override;
-	for (const dir of (env.PATH ?? "").split(delimiter)) {
+	const binNames = platform === "win32" ? ["bun.exe", "bun.cmd", "bun"] : ["bun"];
+	const pathDelimiter = platform === "win32" ? ";" : delimiter;
+	const findBunIn = (dir: string): string | undefined => {
+		for (const name of binNames) {
+			const candidate = join(dir, name);
+			if (existsSync(candidate)) return candidate;
+		}
+		return undefined;
+	};
+	for (const dir of (env.PATH ?? env.Path ?? "").split(pathDelimiter)) {
 		if (!dir) continue;
-		const candidate = join(dir, "bun");
-		if (existsSync(candidate)) return candidate;
+		const candidate = findBunIn(dir);
+		if (candidate) return candidate;
 	}
-	const home = env.HOME;
-	if (home) {
-		const candidate = join(home, ".bun", "bin", "bun");
-		if (existsSync(candidate)) return candidate;
+	for (const home of [env.HOME, env.USERPROFILE]) {
+		if (!home) continue;
+		const candidate = findBunIn(join(home, ".bun", "bin"));
+		if (candidate) return candidate;
 	}
 	return undefined;
 }
