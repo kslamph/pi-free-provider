@@ -197,8 +197,9 @@ describe("zenfree session_start wiring", () => {
 	it("syncs zen at session start even without a clinefree credential, registering under the live gateway url", async () => {
 		stubNetwork();
 		const { handlers, registered } = await boot();
-		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => Promise<void>;
-		await handler({ reason: "new" }, fakeCtx());
+		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => void;
+		expect(handler({ reason: "new" }, fakeCtx())).toBeUndefined();
+		await vi.waitFor(() => expect(registered.find((r) => r.id === "zenfree")).toBeDefined());
 		const zen = registered.find((r) => r.id === "zenfree");
 		expect(zen).toBeDefined();
 		expect((zen!.config as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v9");
@@ -212,14 +213,16 @@ describe("zenfree session_start wiring", () => {
 
 	it("unregisters the zen provider and prompts a switch when the free lineup empties", async () => {
 		stubNetwork();
-		const { handlers, unregistered } = await boot();
-		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => Promise<void>;
+		const { handlers, registered, unregistered } = await boot();
+		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => void;
 		const ctx = { ui: { notify: vi.fn() }, model: { id: "big-pickle" } } as never;
-		await handler({ reason: "new" }, ctx);
+		handler({ reason: "new" }, ctx);
+		await vi.waitFor(() => expect(registered.find((r) => r.id === "zenfree")).toBeDefined());
 		consolePayload = { providers: { opencode: { models: { paid: { cost: [{ input: 3, output: 1 }] } } } } };
 		// the composed lineup empties only when models.dev has no free models either
 		modelsdevPayload = {};
-		await handler({ reason: "new" }, ctx);
+		handler({ reason: "new" }, ctx);
+		await vi.waitFor(() => expect(unregistered).toContain("zenfree"));
 		expect(unregistered).toContain("zenfree");
 		const calls = (ctx as { ui: { notify: ReturnType<typeof vi.fn> } }).ui.notify.mock.calls.map((c) => String(c[0]));
 		expect(calls.some((m) => m.includes("free lineup is empty"))).toBe(true);

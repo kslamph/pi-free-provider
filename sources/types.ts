@@ -18,15 +18,15 @@ export interface LineupEntry {
 export interface FreeModelSource {
 	id: string;
 	/** Resolve tags and (re)extract the request contract; `force` bypasses the min interval. */
-	refreshContract(force?: boolean): Promise<ContractResult>;
+	refreshContract(force?: boolean, signal?: AbortSignal): Promise<ContractResult>;
 	/** Fetch the current free-model lineup (with cache fallback). */
-	fetchLineup(): Promise<LineupEntry[]>;
+	fetchLineup(signal?: AbortSignal): Promise<LineupEntry[]>;
 	/**
 	 * Pull and cache the capability feeds, gated by id coverage: skipped when
 	 * every id in `ids` was already covered by a prior successful fetch, unless
 	 * `force` (manual refresh) bypasses that check.
 	 */
-	refreshCapabilities(ids: string[], force?: boolean): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }>;
+	refreshCapabilities(ids: string[], force?: boolean, signal?: AbortSignal): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }>;
 	/** Resolve one model id's capabilities using the current feeds. */
 	resolveCapabilities(id: string): ModelCapabilities;
 }

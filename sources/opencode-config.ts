@@ -16,6 +16,7 @@
  */
 
 import type { FeedEntry } from "../feeds.ts";
+import { fetchWithTimeout } from "../network.ts";
 
 export const CONSOLE_CONFIG_URL = "https://opencode.ai/console/api/v2/config";
 
@@ -208,11 +209,16 @@ export function composeZenLineup(
  * Fetch the console config with the workspace key. Throws `HTTP 401` on 401
  * (auth validation needs to distinguish it); undefined on other failures.
  */
-export async function fetchConsoleConfig(apiKey: string, fetcher: typeof fetch = fetch, providerId = "opencode"): Promise<ZenConsoleConfig | undefined> {
+export async function fetchConsoleConfig(
+	apiKey: string,
+	fetcher: typeof fetch = fetch,
+	providerId = "opencode",
+	signal?: AbortSignal,
+): Promise<ZenConsoleConfig | undefined> {
 	try {
-		const response = await fetcher(CONSOLE_CONFIG_URL, {
+		const response = await fetchWithTimeout(fetcher, CONSOLE_CONFIG_URL, {
 			headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-		});
+		}, signal);
 		if (response.status === 401 || response.status === 403) throw new Error(`HTTP ${response.status}`);
 		if (!response.ok) return undefined;
 		return parseConsoleConfig(await response.json(), providerId);

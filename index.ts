@@ -1,11 +1,13 @@
 /**
  * pi-free-provider — Cline's free models as one auto-synced pi provider (`clinefree`).
  *
- * session_start (and /clinefree refresh) fetches the live free lineup, resolves
- * each model's capabilities (models.dev openrouter → Vercel gateway → defaults),
- * and re-registers the provider on diff. The request contract (headers, endpoint
+ * session_start schedules a background refresh (and /clinefree refresh runs it
+ * interactively) that fetches the live free lineup, resolves each model's
+ * capabilities (models.dev openrouter → Vercel gateway → defaults), and
+ * re-registers the provider on diff. The request contract (headers, endpoint
  * path, versions) comes from the cline/cline GitHub repo at the latest release
- * tags; a baked-in snapshot is the fail-soft fallback. Nothing blocks startup.
+ * tags; a baked-in snapshot is the fail-soft fallback. Cached providers keep
+ * startup usable while the background refresh runs.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -25,6 +27,7 @@ import { createClineSource, type ClineSource } from "./sources/cline.ts";
 import type { LineupEntry } from "./sources/types.ts";
 import { maskKey, registerClinefreeCommand, registerZenfreeCommand } from "./tui.ts";
 import type { FeedEntry } from "./feeds.ts";
+import { SYNC_DEADLINE_MS, SyncDeadlineError, withSyncDeadline } from "./network.ts";
 
 export const PROVIDER_ID = "clinefree";
 export const PROVIDER_NAME = "Cline Free";
@@ -56,6 +59,12 @@ export interface SyncDeps {
 	isCurrentModel(id: string): boolean;
 	/** Force a capability re-fetch even for already-covered ids (manual refresh). */
 	forceCapabilities?: boolean;
+	/** Abort signal for an automatic background sync. */
+	signal?: AbortSignal;
+	/** False when a newer session or refresh has superseded this sync. */
+	isSyncCurrent?: () => boolean;
+	/** Receive the accepted lineup after the current-run check. */
+	onLineup?: (lineup: LineupEntry[]) => void;
 }
 
 /**
@@ -68,7 +77,7 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 
 	let lineup: LineupEntry[];
 	try {
-		lineup = await deps.source.fetchLineup();
+		lineup = deps.signal ? await deps.source.fetchLineup(deps.signal) : await deps.source.fetchLineup();
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
 		deps.notify(`clinefree: sync failed (${reason}) — keeping previous models`);
@@ -78,7 +87,8 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 	const desiredIds = lineup.map((entry) => entry.id);
 	if (desiredIds.length > 0) {
 		try {
-			await deps.source.refreshCapabilities(desiredIds, deps.forceCapabilities ?? false);
+			if (deps.signal) await deps.source.refreshCapabilities(desiredIds, deps.forceCapabilities ?? false, deps.signal);
+			else await deps.source.refreshCapabilities(desiredIds, deps.forceCapabilities ?? false);
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
 			deps.notify(`clinefree: capability fetch failed (${reason}) — using cached/default capabilities`);
@@ -89,6 +99,10 @@ export async function syncOnce(deps: SyncDeps): Promise<{ added: string[]; remov
 	const warnings = [...deps.source.warnings];
 	for (const warning of warnings) deps.notify(warning);
 	deps.source.warnings.length = 0;
+	if (deps.isSyncCurrent && !deps.isSyncCurrent()) {
+		return { added: [], removed: [], warnings };
+	}
+	deps.onLineup?.(lineup);
 
 	const models: ProviderModel[] = lineup.map((entry) =>
 		toProviderModel(entry.id, deps.source.resolveCapabilities(entry.id), entry.name, { maxTokensField: "max_tokens" }),
@@ -259,9 +273,21 @@ export default function clinefree(pi: ExtensionAPI): void {
 	};
 
 	/** Full sync: contract (TTL-gated) → lineup+capabilities+register. `force` bypasses the tag-interval and re-fetches capabilities even for already-covered ids. */
-	const fullSync = async (force = false): Promise<void> => {
-		currentContract = await source.refreshContract(force);
-		const result = await syncOnce({ ...deps, forceCapabilities: force });
+	interface SyncRunOptions {
+		signal?: AbortSignal;
+		isCurrent?: () => boolean;
+	}
+
+	const fullSync = async (force = false, options: SyncRunOptions = {}): Promise<void> => {
+		currentContract = await source.refreshContract(force, options.signal);
+		const result = await syncOnce({
+			...deps,
+			forceCapabilities: force,
+			signal: options.signal,
+			isSyncCurrent: options.isCurrent,
+			onLineup: patchLineup,
+		});
+		if (options.isCurrent && !options.isCurrent()) return;
 		recordSyncResultIn(clinefreeStore, result.added, result.removed, result.warnings);
 	};
 
@@ -289,48 +315,25 @@ export default function clinefree(pi: ExtensionAPI): void {
 		}
 	}
 
-	pi.on("session_start", async (event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
 		ui = ctx.ui;
 		getModel = () => ctx.model;
 
-		// clinefree — independent of zenfree; a missing cline credential must not
-		// short-circuit the other source's sync.
 		resetConversation(event.reason);
-		if (!config.auth) {
-			notify("clinefree: no credential — run /clinefree to sign in with a Cline account or API key");
-		} else {
-			try {
-				await fullSync();
-			} catch (error) {
-				notify(`clinefree: sync error (${error instanceof Error ? error.message : String(error)}) — models unchanged`);
-			}
-		}
-
-		// zenfree — independent of clinefree (own guard, own try/catch).
 		resetZenConversation(event.reason);
-		if (!zenConfig.auth) {
-			notify("zenfree: no OpenCode credential — run /zenfree to sign in");
-			return;
-		}
-		try {
-			await zenSync();
-		} catch (error) {
-			notify(`zenfree: sync error (${error instanceof Error ? error.message : String(error)}) — models unchanged`);
-		}
+		if (!config.auth) notify("clinefree: no credential — run /clinefree to sign in with a Cline account or API key");
+		if (!zenConfig.auth) notify("zenfree: no OpenCode credential — run /zenfree to sign in");
+		// Network refresh is deliberately detached from session_start. Cached
+		// providers remain usable while the live lineup warms in the background.
+		scheduleBackgroundSync();
 	});
+	pi.on("session_shutdown", () => cancelBackgroundSync());
 
 	// /clinefree command (status · models · auth; r in the status panel refreshes).
 	let lastLineup: LineupEntry[] = readCache<LineupEntry[]>("lineup.json") ?? [];
 	const patchLineup = (entries: LineupEntry[]): void => {
 		lastLineup = entries;
 	};
-	const originalFetchLineup = source.fetchLineup.bind(source);
-	source.fetchLineup = async () => {
-		const entries = await originalFetchLineup();
-		patchLineup(entries);
-		return entries;
-	};
-
 	// ── zenfree (OpenCode Zen) — second source, fully independent failures ──
 
 	let zenConfig: ClinefreeConfig;
@@ -397,15 +400,17 @@ export default function clinefree(pi: ExtensionAPI): void {
 	 * then the contract — so a first registration uses the live config
 	 * baseURL, not the baked-in fallback — then caps, then registration.
 	 */
-	const zenSync = async (force = false): Promise<void> => {
-		const lineup = await zenSource.fetchLineup(zenConfig.auth);
-		zenCurrentContract = await zenSource.refreshContract(force);
+	const zenSync = async (force = false, options: SyncRunOptions = {}): Promise<void> => {
+		const lineup = await zenSource.fetchLineup(zenConfig.auth, options.signal);
+		zenCurrentContract = await zenSource.refreshContract(force, options.signal);
 		const ids = lineup.map((entry) => entry.id);
-		const feeds = await zenSource.refreshCapabilities(ids, force);
+		const feeds = await zenSource.refreshCapabilities(ids, force, options.signal);
 		void feeds;
 		const warnings = [...zenSource.warnings];
 		for (const warning of warnings) notify(warning);
 		zenSource.warnings.length = 0;
+		if (options.isCurrent && !options.isCurrent()) return;
+		lastZenLineup = lineup;
 		const targets = buildZenTargets({
 			lineup,
 			resolve: (id) => zenSource.resolveCapabilities(id),
@@ -417,6 +422,53 @@ export default function clinefree(pi: ExtensionAPI): void {
 		const result = syncProviders(zenEngine, targets);
 		recordZenSyncResult(result.added, result.removed, warnings);
 	};
+
+	let backgroundTimer: ReturnType<typeof setTimeout> | undefined;
+	let backgroundGeneration = 0;
+	let backgroundController: AbortController | undefined;
+
+	function cancelBackgroundSync(): void {
+		backgroundGeneration++;
+		if (backgroundTimer !== undefined) {
+			clearTimeout(backgroundTimer);
+			backgroundTimer = undefined;
+		}
+		backgroundController?.abort();
+		backgroundController = undefined;
+	}
+
+	function scheduleBackgroundSync(): void {
+		cancelBackgroundSync();
+		const generation = backgroundGeneration;
+		backgroundTimer = setTimeout(() => {
+			backgroundTimer = undefined;
+			const controller = new AbortController();
+			backgroundController = controller;
+			const isCurrent = (): boolean => generation === backgroundGeneration && !controller.signal.aborted;
+			const task = Promise.allSettled([
+				config.auth ? fullSync(false, { signal: controller.signal, isCurrent }) : Promise.resolve(),
+				zenConfig.auth ? zenSync(false, { signal: controller.signal, isCurrent }) : Promise.resolve(),
+			]);
+			void withSyncDeadline(task, controller)
+				.then((results) => {
+					if (!isCurrent()) return;
+					for (const [label, result] of [["clinefree", results[0]], ["zenfree", results[1]]] as const) {
+						if (result?.status === "rejected") {
+							notify(`${label}: background sync failed (${result.reason instanceof Error ? result.reason.message : String(result.reason)}) — models unchanged`);
+						}
+					}
+				})
+				.catch((error) => {
+					if (!isCurrent()) return;
+					const detail = error instanceof SyncDeadlineError ? `exceeded ${SYNC_DEADLINE_MS}ms` : error instanceof Error ? error.message : String(error);
+					notify(`free-provider: background sync stopped (${detail}) — cached models retained`);
+				})
+				.finally(() => {
+					if (generation === backgroundGeneration) backgroundController = undefined;
+				});
+		}, 0);
+		backgroundTimer.unref?.();
+	}
 
 	// Cached fast-path: register from the zenfree cache before any network.
 	if (zenConfig.auth) {
@@ -445,15 +497,11 @@ export default function clinefree(pi: ExtensionAPI): void {
 		Object.entries(zenfreeState.readCache<{ models: Record<string, { name?: string }> }>("lineup.json")?.models ?? {})
 			.map(([id, m]) => ({ id, name: m?.name }))
 			.sort((a, b) => a.id.localeCompare(b.id));
-	const originalZenFetchLineup = zenSource.fetchLineup.bind(zenSource);
-	zenSource.fetchLineup = async (credential) => {
-		const entries = await originalZenFetchLineup(credential);
-		lastZenLineup = entries;
-		return entries;
-	};
-
 	registerZenfreeCommand(pi, {
-		refresh: () => zenSync(true),
+		refresh: () => {
+			cancelBackgroundSync();
+			return zenSync(true);
+		},
 		snapshot: () => {
 			const status = zenSource.status();
 			const lineupIds = lastZenLineup.map((e) => e.id);
@@ -484,6 +532,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 			}
 			zenConfig.auth = { mode: "apiKey", apiKey: key };
 			zenfreeState.saveConfig(zenConfig);
+			cancelBackgroundSync();
 			void zenSync(true);
 			return { ok: true, detail: "workspace key accepted" };
 		},
@@ -494,6 +543,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 				if (verdict !== "ok") return { ok: false, detail: `rejected after sign-in (${verdict})` };
 				zenConfig.auth = cred;
 				zenfreeState.saveConfig(zenConfig);
+				cancelBackgroundSync();
 				void zenSync(true);
 				return { ok: true, detail: "OpenCode account accepted" };
 			} catch (error) {
@@ -501,6 +551,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 			}
 		},
 		clearCredential: () => {
+				cancelBackgroundSync();
 			zenConfig.auth = undefined;
 			zenfreeState.saveConfig(zenConfig);
 		},
@@ -508,7 +559,10 @@ export default function clinefree(pi: ExtensionAPI): void {
 	});
 
 	registerClinefreeCommand(pi, {
-		refresh: () => fullSync(true),
+		refresh: () => {
+			cancelBackgroundSync();
+			return fullSync(true);
+		},
 		snapshot: () => {
 			const status = source.status();
 			return {
@@ -535,6 +589,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 			if (!result.ok) return { ok: false, detail: `HTTP ${result.status}` };
 			config.auth = { ...cred, account: result.account };
 			saveConfig(config);
+			cancelBackgroundSync();
 			void fullSync();
 			return { ok: true, detail: result.account.email ?? "accepted" };
 		},
@@ -545,6 +600,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 				if (!result.ok) return { ok: false, detail: `rejected after sign-in (HTTP ${result.status})` };
 				config.auth = { ...cred, account: result.account };
 				saveConfig(config);
+				cancelBackgroundSync();
 				void fullSync();
 				return { ok: true, detail: result.account.email ?? "signed in" };
 			} catch (error) {
@@ -552,6 +608,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 			}
 		},
 		clearCredential: () => {
+			cancelBackgroundSync();
 			config.auth = undefined;
 			saveConfig(config);
 		},

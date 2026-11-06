@@ -15,6 +15,7 @@ import { BAKED_IN_CONTRACT, extractContract, type ContractResult } from "../cont
 import { resolveCapabilities } from "../capabilities.ts";
 import { fetchModelsDevOpenRouter, fetchVercelGateway, type FeedEntry } from "../feeds.ts";
 import { fetchRawAtSha, resolveLatestTag, TAG_PREFIXES } from "../github.ts";
+import { fetchWithTimeout } from "../network.ts";
 import { readCache as defaultReadCache, writeCache as defaultWriteCache } from "../state.ts";
 import type { FreeModelSource, LineupEntry } from "./types.ts";
 
@@ -104,7 +105,7 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 
 	const cachedContract = (): ContractResult | undefined => readCache<ContractResult>("contract.json");
 
-	async function refreshContract(force = false): Promise<ContractResult> {
+	async function refreshContract(force = false, signal?: AbortSignal): Promise<ContractResult> {
 		const state = readState();
 		const lastCheck = state.timestamps.tags ?? 0;
 		if (!force && lastCheck > 0 && now() - lastCheck < minIntervalMs) {
@@ -115,9 +116,9 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 		let shas: SyncState["shas"];
 		try {
 			const [llms, core, cli] = await Promise.all([
-				resolveLatestTag(TAG_PREFIXES.llms, fetcher),
-				resolveLatestTag(TAG_PREFIXES.core, fetcher),
-				resolveLatestTag(TAG_PREFIXES.cli, fetcher),
+					resolveLatestTag(TAG_PREFIXES.llms, fetcher, signal),
+					resolveLatestTag(TAG_PREFIXES.core, fetcher, signal),
+					resolveLatestTag(TAG_PREFIXES.cli, fetcher, signal),
 			]);
 			tags = { llms: llms.tag, core: core.tag, cli: cli.tag };
 			shas = { llms: llms.sha, core: core.sha, cli: cli.sha };
@@ -134,9 +135,9 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 		if (!unchanged || !contract) {
 			try {
 				const [requestHeaders, clientHeaders, recommended] = await Promise.all([
-					fetchRawAtSha(shas.llms!, CONTRACT_FILES.requestHeaders, fetcher),
-					fetchRawAtSha(shas.llms!, CONTRACT_FILES.clientHeaders, fetcher),
-					fetchRawAtSha(shas.llms!, CONTRACT_FILES.recommended, fetcher),
+					fetchRawAtSha(shas.llms!, CONTRACT_FILES.requestHeaders, fetcher, signal),
+					fetchRawAtSha(shas.llms!, CONTRACT_FILES.clientHeaders, fetcher, signal),
+					fetchRawAtSha(shas.llms!, CONTRACT_FILES.recommended, fetcher, signal),
 				]);
 				contract = extractContract(
 					{ requestHeaders, clientHeaders, recommended },
@@ -157,12 +158,12 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 		return contract ?? BAKED_IN_CONTRACT;
 	}
 
-	async function fetchFreeModelsFromModelsCatalog(): Promise<LineupEntry[]> {
+	async function fetchFreeModelsFromModelsCatalog(signal?: AbortSignal): Promise<LineupEntry[]> {
 		const url = `${CLINE_API_BASE}/api/v1/ai/cline/models`;
 		const cached = readCache<ModelsCatalogCache>("models.json");
 		if (cached?.ids.length) return cached.ids.map((id) => ({ id, name: cached.entries[id]?.name }));
 		try {
-			const response = await fetcher(url);
+			const response = await fetchWithTimeout(fetcher, url, undefined, signal);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			const payload = (await response.json()) as { data?: Array<{ id: string; name?: string; pricing?: { prompt: string } }> };
 			const free: LineupEntry[] = [];
@@ -181,7 +182,7 @@ export function createClineSource(deps: ClineSourceDeps = {}): ClineSource {
 		}
 	}
 
-async function fetchLineup(): Promise<LineupEntry[]> {
+async function fetchLineup(signal?: AbortSignal): Promise<LineupEntry[]> {
 	const contract = cachedContract() ?? BAKED_IN_CONTRACT;
 	const baseUrl = `${CLINE_API_BASE}${contract.endpointPath}`;
 	const state = readState();
@@ -190,7 +191,7 @@ async function fetchLineup(): Promise<LineupEntry[]> {
 	const baseFree: LineupEntry[] = [];
 	let recommendedFailed = false;
 	try {
-		const response = await fetcher(baseUrl, { headers: contract.headers });
+			const response = await fetchWithTimeout(fetcher, baseUrl, { headers: contract.headers }, signal);
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		const payload = (await response.json()) as { free?: LineupEntry[] };
 		baseFree.push(...(Array.isArray(payload.free) ? payload.free.filter((e) => e && typeof e.id === "string" && e.id.length > 0) : []));
@@ -201,7 +202,7 @@ async function fetchLineup(): Promise<LineupEntry[]> {
 	}
 
 	// Merge models with pricing.prompt == "0" from the /models catalog.
-	const modelsFree = await fetchFreeModelsFromModelsCatalog();
+		const modelsFree = await fetchFreeModelsFromModelsCatalog(signal);
 	const merged = dedupeLineup(baseFree, modelsFree);
 	writeCache("lineup.json", merged);
 	writeState({ ...state, timestamps: { ...state.timestamps, lineup: now() } });
@@ -210,7 +211,7 @@ async function fetchLineup(): Promise<LineupEntry[]> {
 	if (recommendedFailed && modelsFree.length === 0) return lineupCache ?? [];
 	return merged;
 }
-	async function refreshCapabilities(ids: string[], force = false): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }> {
+		async function refreshCapabilities(ids: string[], force = false, signal?: AbortSignal): Promise<{ openrouter: Record<string, FeedEntry>; vercel: Record<string, FeedEntry> }> {
 		const cached = readCache<CachedCapabilities>("capabilities.json");
 		const coveredIds = new Set(cached?.coveredIds ?? []);
 		const hasUncovered = ids.some((id) => !coveredIds.has(id));
@@ -224,7 +225,7 @@ async function fetchLineup(): Promise<LineupEntry[]> {
 		}
 
 		const current: CachedCapabilities = cached ?? { openrouter: {}, vercel: {}, updatedAt: 0, coveredIds: [] };
-		const [or, vc] = await Promise.allSettled([fetchModelsDevOpenRouter(fetcher), fetchVercelGateway(fetcher)]);
+			const [or, vc] = await Promise.allSettled([fetchModelsDevOpenRouter(fetcher, signal), fetchVercelGateway(fetcher, signal)]);
 		if (or.status === "fulfilled") current.openrouter = or.value;
 		else warnings.push(`clinefree: models.dev fetch failed (${or.reason instanceof Error ? or.reason.message : String(or.reason)})`);
 		if (vc.status === "fulfilled") current.vercel = vc.value;

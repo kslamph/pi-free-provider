@@ -81,9 +81,9 @@ export interface ZenSource {
 	id: string;
 	/** Warnings collected by the most recent refresh calls (surfaced once per sync). */
 	warnings: string[];
-	refreshContract(force?: boolean): Promise<ZenContractResult>;
-	fetchLineup(credential?: Credential): Promise<{ id: string; name?: string }[]>;
-	refreshCapabilities(ids: string[], force?: boolean): Promise<Record<string, Record<string, FeedEntry>>>;
+	refreshContract(force?: boolean, signal?: AbortSignal): Promise<ZenContractResult>;
+	fetchLineup(credential?: Credential, signal?: AbortSignal): Promise<{ id: string; name?: string }[]>;
+	refreshCapabilities(ids: string[], force?: boolean, signal?: AbortSignal): Promise<Record<string, Record<string, FeedEntry>>>;
 	resolveCapabilities(id: string): ZenCapabilities;
 	resolveTransport(id: string): "openai-completions" | "openai-responses";
 	/** Live gateway url from the last successful config fetch, when known. */
@@ -140,7 +140,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		return { ...lineup, models };
 	};
 
-	async function refreshContract(force = false): Promise<ZenContractResult> {
+	async function refreshContract(force = false, signal?: AbortSignal): Promise<ZenContractResult> {
 		const state = readState();
 		const lastCheck = state.timestamps.version ?? 0;
 		if (!force && lastCheck > 0 && now() - lastCheck < minIntervalMs) {
@@ -150,7 +150,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 
 		let version: string | undefined;
 		try {
-			version = await resolveLatestCliVersion(fetcher);
+			version = await resolveLatestCliVersion(fetcher, signal);
 		} catch {
 			version = undefined;
 		}
@@ -169,7 +169,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		return contract;
 	}
 
-	async function fetchLineup(credential?: Credential): Promise<{ id: string; name?: string }[]> {
+	async function fetchLineup(credential?: Credential, signal?: AbortSignal): Promise<{ id: string; name?: string }[]> {
 		let cached = cachedLineup();
 		const authToken = credential?.mode === "oauth" ? credential.accessToken : credential?.apiKey;
 		if (!authToken) {
@@ -184,7 +184,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		let devFailed = false;
 		try {
 			for (const id of providerIds) {
-				const catalog = await fetchModelsDevModels(id, fetcher);
+				const catalog = await fetchModelsDevModels(id, fetcher, signal);
 				for (const [modelId, entry] of Object.entries(catalog)) if (!devCatalog[modelId]) devCatalog[modelId] = entry;
 			}
 		} catch (error) {
@@ -197,7 +197,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		let configOk = false;
 		for (const id of providerIds) {
 			try {
-				const config = await fetchConsoleConfig(authToken, fetcher, id);
+				const config = await fetchConsoleConfig(authToken, fetcher, id, signal);
 				if (!config) continue;
 				configOk = true;
 				const part = composeZenLineup(config, devCatalog);
@@ -225,7 +225,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 		return Object.keys(lineup.models).sort().map((id) => ({ id, name: lineup.models[id]?.name }));
 	}
 
-	async function refreshCapabilities(ids: string[], force = false): Promise<Record<string, Record<string, FeedEntry>>> {
+	async function refreshCapabilities(ids: string[], force = false, signal?: AbortSignal): Promise<Record<string, Record<string, FeedEntry>>> {
 		const current: CachedCapabilities = cachedCapabilities() ?? { modelsdev: {}, coveredIds: [], updatedAt: 0 };
 		const covered = new Set(current.coveredIds);
 		const uncovered = ids.filter((id) => !covered.has(id));
@@ -233,7 +233,7 @@ export function createZenSource(deps: ZenSourceDeps = {}): ZenSource {
 			try {
 				modelsdev = {};
 				for (const id of providerIds) {
-					const catalog = await fetchModelsDevModels(id, fetcher);
+					const catalog = await fetchModelsDevModels(id, fetcher, signal);
 					for (const [modelId, entry] of Object.entries(catalog)) if (!modelsdev[modelId]) modelsdev[modelId] = entry;
 				}
 				current.modelsdev = modelsdev;

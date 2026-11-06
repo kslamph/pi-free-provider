@@ -10,6 +10,7 @@
  */
 
 import { compareSemver } from "../github.ts";
+import { fetchWithTimeout } from "../network.ts";
 
 export const UPDATE_API_URL = "https://opencode.ai/update/api/latest/cli";
 export const DEFAULT_ZEN_BASE_URL = "https://opencode.ai/inference/openai/v1";
@@ -40,9 +41,9 @@ export const BAKED_IN_ZEN_CONTRACT: ZenContractResult = {
  * distribution artifact, else the first active one. Undefined on any
  * failure — the caller falls back to the baked-in version.
  */
-export async function resolveLatestCliVersion(fetcher: typeof fetch = fetch): Promise<string | undefined> {
+export async function resolveLatestCliVersion(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string | undefined> {
 	try {
-		const response = await fetcher(UPDATE_API_URL);
+		const response = await fetchWithTimeout(fetcher, UPDATE_API_URL, undefined, signal);
 		if (!response.ok) return undefined;
 		const payload = (await response.json()) as { artifacts?: { distribution?: string; version?: string; active?: boolean }[] };
 		const artifacts = Array.isArray(payload?.artifacts) ? payload.artifacts : [];

@@ -6,6 +6,8 @@
  * `cli-v3.0.8` sorts after `cli-v3.0.65` — so tags are compared semver-style.
  */
 
+import { fetchWithTimeout } from "./network.ts";
+
 export const GITHUB_API_BASE = "https://api.github.com/repos/cline/cline/git/matching-refs";
 export const RAW_API_TAG_BASE = "https://api.github.com/repos/cline/cline/git/tags";
 export const RAW_BASE = "https://raw.githubusercontent.com/cline/cline";
@@ -29,8 +31,8 @@ interface MatchingRef {
 }
 
 /** Annotated tags point at a tag *object*; raw fetches need the commit SHA. */
-async function dereferenceToCommit(sha: string, fetcher: typeof fetch): Promise<string> {
-	const response = await fetcher(`${RAW_API_TAG_BASE}/${sha}`);
+async function dereferenceToCommit(sha: string, fetcher: typeof fetch, signal?: AbortSignal): Promise<string> {
+	const response = await fetchWithTimeout(fetcher, `${RAW_API_TAG_BASE}/${sha}`, undefined, signal);
 	if (!response.ok) {
 		throw new Error(`tag dereference failed for ${sha.slice(0, 7)}: HTTP ${response.status}`);
 	}
@@ -62,8 +64,8 @@ function versionOf(tag: string): string {
  * Resolve the semver-newest tag under a ref prefix.
  * `prefix` is the matching-refs path segment, e.g. `tags/cli-v`.
  */
-export async function resolveLatestTag(prefix: string, fetcher: typeof fetch = fetch): Promise<ResolvedTag> {
-	const response = await fetcher(`${GITHUB_API_BASE}/${prefix}`);
+export async function resolveLatestTag(prefix: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<ResolvedTag> {
+	const response = await fetchWithTimeout(fetcher, `${GITHUB_API_BASE}/${prefix}`, undefined, signal);
 	if (!response.ok) {
 		throw new Error(`tag resolution failed for ${prefix}: HTTP ${response.status}`);
 	}
@@ -76,13 +78,13 @@ export async function resolveLatestTag(prefix: string, fetcher: typeof fetch = f
 	}
 	tags.sort((a, b) => compareSemver(versionOf(a.tag), versionOf(b.tag)));
 	const newest = tags[tags.length - 1]!;
-	const sha = newest.type === "tag" ? await dereferenceToCommit(newest.sha, fetcher) : newest.sha;
+	const sha = newest.type === "tag" ? await dereferenceToCommit(newest.sha, fetcher, signal) : newest.sha;
 	return { tag: newest.tag, sha };
 }
 
 /** Fetch a raw file content at an immutable commit SHA. */
-export async function fetchRawAtSha(sha: string, path: string, fetcher: typeof fetch = fetch): Promise<string> {
-	const response = await fetcher(`${RAW_BASE}/${sha}/${path}`);
+export async function fetchRawAtSha(sha: string, path: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
+	const response = await fetchWithTimeout(fetcher, `${RAW_BASE}/${sha}/${path}`, undefined, signal);
 	if (!response.ok) {
 		throw new Error(`raw fetch failed for ${path}@${sha.slice(0, 7)}: HTTP ${response.status}`);
 	}

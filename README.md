@@ -123,8 +123,11 @@ Status panel to force a refresh — otherwise everything refreshes on its own:
 | upstream client contract | when older than 30 minutes |
 | zen credential token | automatically, shortly before it expires |
 
-Every network path fails soft: an unreachable feed falls back to the last good
-cache, then to documented defaults, with a warning — never a broken startup.
+The session starts from the last cached lineup; the live refresh runs in the
+background so a slow feed does not block Pi's prompt. Automatic metadata
+requests time out after 10 seconds and the complete refresh has a 30-second
+deadline. Every network path fails soft: an unreachable feed falls back to the
+last good cache, then to documented defaults, with a warning.
 
 ## Bun (required for `zenfree`)
 

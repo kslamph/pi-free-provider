@@ -11,6 +11,8 @@
  * empty block and the capability resolver falls through to the next source.
  */
 
+import { fetchWithTimeout } from "./network.ts";
+
 export interface FeedEntry {
 	id: string;
 	name?: string;
@@ -141,8 +143,8 @@ export function reduceVercel(payload: unknown): Record<string, FeedEntry> {
 }
 
 /** Fetch and reduce one provider's block from models.dev. Throws on !ok. */
-export async function fetchModelsDevModels(providerId: string, fetcher: typeof fetch = fetch): Promise<Record<string, FeedEntry>> {
-	const response = await fetcher(MODELS_DEV_URL);
+export async function fetchModelsDevModels(providerId: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<Record<string, FeedEntry>> {
+	const response = await fetchWithTimeout(fetcher, MODELS_DEV_URL, undefined, signal);
 	if (!response.ok) throw new Error(`models.dev fetch failed: HTTP ${response.status}`);
 	return reduceModelsDevProvider(await response.json(), providerId);
 }
@@ -151,21 +153,22 @@ export async function fetchModelsDevModels(providerId: string, fetcher: typeof f
 export async function fetchModelsDevProviders(
 	providerIds: string[],
 	fetcher: typeof fetch = fetch,
+	signal?: AbortSignal,
 ): Promise<Record<string, Record<string, FeedEntry>>> {
-	const response = await fetcher(MODELS_DEV_URL);
+	const response = await fetchWithTimeout(fetcher, MODELS_DEV_URL, undefined, signal);
 	if (!response.ok) throw new Error(`models.dev fetch failed: HTTP ${response.status}`);
 	const payload = await response.json();
 	return Object.fromEntries(providerIds.map((id) => [id, reduceModelsDevProvider(payload, id)]));
 }
 
 /** Fetch and reduce the models.dev openrouter block. Throws on !ok. */
-export async function fetchModelsDevOpenRouter(fetcher: typeof fetch = fetch): Promise<Record<string, FeedEntry>> {
-	return fetchModelsDevModels("openrouter", fetcher);
+export async function fetchModelsDevOpenRouter(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<Record<string, FeedEntry>> {
+	return fetchModelsDevModels("openrouter", fetcher, signal);
 }
 
 /** Fetch and reduce the Vercel AI Gateway listing. Throws on !ok. */
-export async function fetchVercelGateway(fetcher: typeof fetch = fetch): Promise<Record<string, FeedEntry>> {
-	const response = await fetcher(VERCEL_MODELS_URL);
+export async function fetchVercelGateway(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<Record<string, FeedEntry>> {
+	const response = await fetchWithTimeout(fetcher, VERCEL_MODELS_URL, undefined, signal);
 	if (!response.ok) throw new Error(`vercel gateway fetch failed: HTTP ${response.status}`);
 	return reduceVercel(await response.json());
 }
