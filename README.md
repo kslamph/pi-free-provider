@@ -134,12 +134,18 @@ to TLS clients shaped like its own Bun-based CLI. The identical request gets
 (`zen-sidecar.ts`) on loopback and sends the request through it; the request
 shape itself is unchanged.
 
-- Install bun: <https://bun.sh> (`curl -fsSL https://bun.sh/install | bash`).
-- Resolution order: `$ZENFREE_BUN` → Bun on `PATH` (`bun.exe`/`bun.cmd` on
-  Windows) → `~/.bun/bin/bun` (or `%USERPROFILE%\.bun\bin\bun.exe` on Windows).
-- If bun is missing, the extension says so once and falls back to direct
-  requests — which the gateway will most likely answer with `429`. `clinefree`
-  is unaffected and needs no bun.
+Two steps:
+
+1. Install Bun: `curl -fsSL https://bun.sh/install | bash`
+   (Windows: `powershell -c "irm bun.sh/install.ps1 | iex"`).
+2. Restart pi, then retry the request. Bun in `~/.bun/bin` (`%USERPROFILE%\.bun\bin`)
+   is also picked up mid-session, because the relay re-resolves Bun on every request.
+
+Resolution order: `$ZENFREE_BUN` → Bun on `PATH` (`bun.exe`/`bun.cmd` on
+Windows) → `~/.bun/bin/bun` (or `%USERPROFILE%\.bun\bin\bun.exe` on Windows).
+If Bun is missing, the extension prints exactly these two steps once and falls
+back to direct requests — which the gateway will most likely answer with `429`.
+`clinefree` is unaffected and needs no Bun.
 
 ## Files and environment
 

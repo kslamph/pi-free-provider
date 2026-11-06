@@ -15,7 +15,9 @@ For what the extension does, the sign-in flows and the env vars it honours, see
 - [`pi`](https://pi.dev) installed, and **Node.js ≥ 22** (`node -v`).
 - For the git routes: git (`git --version`).
 - `bun` only if you want `zenfree` — the OpenCode Zen free tier is served through
-  a small Bun relay (`bun --version`); `clinefree` works without it.
+  a small Bun relay (`bun --version`); `clinefree` works without it. Two steps:
+  1. `curl -fsSL https://bun.sh/install | bash` (Windows: `powershell -c "irm bun.sh/install.ps1 | iex"`)
+  2. Restart `pi` and retry (a Bun the relay finds in `~/.bun/bin` is also picked up mid-session).
 
 Runtime dependencies: none of your own. Every import is a pi-supplied peer
 package, so there is nothing extra to install after the extension lands.
@@ -108,7 +110,7 @@ pi remove npm:pi-free-provider
 | Symptom | Cause / fix |
 | --- | --- |
 | `npm ERR! 404` on `pi install npm:pi-free-provider` | Registry lag right after a release, or a bad version pin. Check `npm view pi-free-provider version`; drop the `@version` to take `latest`. |
-| `zenfree` models always answer `429 FreeUsageLimitError` | Bun is missing (or `$ZENFREE_BUN` is wrong), so the relay never started. `bun --version`, or set `ZENFREE_BUN=/path/to/bun`. `clinefree` is unaffected. |
+| `zenfree` models always answer `429 FreeUsageLimitError` | Bun is missing (or `$ZENFREE_BUN` is wrong), so the relay never started. The extension prints the fix on first use: 1) `curl -fsSL https://bun.sh/install | bash` 2) restart `pi`. Or set `ZENFREE_BUN=/path/to/bun` and restart. `clinefree` is unaffected. |
 | Clone succeeds but the extension seems absent | Restart pi or `/reload`; confirm with `pi list` and `pi config`. |
 | `Permission denied (publickey)` on the SSH form | That form is only needed for push access — use the `git:github.com/…` or npm form instead. |
 | Want to read/tweak the source first | Clone it and install the local path: `git clone https://github.com/kslamph/pi-free-provider.git && pi install ./pi-free-provider` |

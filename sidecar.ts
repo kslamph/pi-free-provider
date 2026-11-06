@@ -55,6 +55,21 @@ const DEFAULT_RETRY_COOLDOWN_MS = 60_000;
 /** Where the bundled Bun relay script lives, next to this module. */
 const SIDECAR_SCRIPT = fileURLToPath(new URL("./zen-sidecar.ts", import.meta.url));
 
+/** The install-and-restart guide shown when Bun is missing (platform-appropriate commands). */
+export function bunInstallHint(platform = process.platform): string {
+	const windows = platform === "win32";
+	const install = windows
+		? 'powershell -c "irm bun.sh/install.ps1 | iex"'
+		: "curl -fsSL https://bun.sh/install | bash";
+	const home = windows ? "%USERPROFILE%\\.bun\\bin" : "~/.bun/bin";
+	return [
+		"zenfree: bun not found — the Bun relay cannot start, so requests fall back to plain Node and Zen answers 429.",
+		`  1) Install Bun:  ${install}`,
+		`  2) Restart pi, then retry (Bun in ${home} is also picked up mid-session).`,
+		`Bun already elsewhere? Set ZENFREE_BUN to its path. clinefree works without Bun.`,
+	].join("\n");
+}
+
 /** Resolve the bun binary: $ZENFREE_BUN → PATH → ~/.bun/bin/bun. */
 export function resolveBunPath(env: Record<string, string | undefined>, platform = process.platform): string | undefined {
 	const override = env.ZENFREE_BUN?.trim();
@@ -116,9 +131,7 @@ export function createZenSidecar(deps: ZenSidecarDeps = {}): ZenSidecar {
 		if (!bun) {
 			if (!missingNotified) {
 				missingNotified = true;
-				notify(
-					"zenfree: bun not found — zen's gateway admits only Bun-shaped TLS clients, so requests go out directly and will likely hit the free-usage wall. Install bun (https://bun.sh) or point ZENFREE_BUN at it.",
-				);
+				notify(bunInstallHint());
 			}
 			return Promise.resolve(undefined);
 		}

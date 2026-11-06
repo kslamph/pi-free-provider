@@ -1,6 +1,6 @@
 {
 	"name": "pi-free-provider",
-	"version": "0.2.3",
+	"version": "0.2.4",
 	"description": "pi extension exposing Cline's free models and OpenCode Zen's free tier as auto-synced providers",
 	"author": "kslamph",
 	"keywords": [

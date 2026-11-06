@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createZenSidecar, resolveBunPath, type SidecarProcess } from "./sidecar.ts";
+import { createZenSidecar, bunInstallHint, resolveBunPath, type SidecarProcess } from "./sidecar.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,6 +75,24 @@ describe("resolveBunPath", () => {
 	});
 });
 
+describe("bunInstallHint", () => {
+	it("gives two steps with the POSIX install script and a restart, off macOS/Linux", () => {
+		const hint = bunInstallHint("linux");
+		expect(hint).toContain("curl -fsSL https://bun.sh/install | bash");
+		expect(hint).toMatch(/1\) Install Bun/);
+		expect(hint).toMatch(/2\) Restart pi/);
+		expect(hint).toContain("~/.bun/bin");
+		expect(hint).toContain("ZENFREE_BUN");
+	});
+
+	it("uses PowerShell and %USERPROFILE% on Windows", () => {
+		const hint = bunInstallHint("win32");
+		expect(hint).toContain('irm bun.sh/install.ps1 | iex');
+		expect(hint).toContain("%USERPROFILE%\\.bun\\bin");
+		expect(hint).not.toContain("curl -fsSL");
+	});
+});
+
 describe("createZenSidecar", () => {
 	it("waits for SIDECAR_READY and returns the loopback base URL, cached across calls", async () => {
 		const spawns: string[][] = [];
@@ -97,7 +115,9 @@ describe("createZenSidecar", () => {
 		await expect(sidecar.ensureSidecar()).resolves.toBeUndefined();
 		await expect(sidecar.ensureSidecar()).resolves.toBeUndefined();
 		expect(notify).toHaveBeenCalledTimes(1);
-		expect(notify.mock.calls[0]![0]).toMatch(/bun/i);
+		expect(notify.mock.calls[0]![0]).toContain("bun not found");
+		expect(notify.mock.calls[0]![0]).toMatch(/1\) Install Bun/);
+		expect(notify.mock.calls[0]![0]).toMatch(/2\) Restart pi/);
 	});
 
 	it("restarts the sidecar after a crash", async () => {
