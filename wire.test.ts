@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { buildZenTargets } from "./index.ts";
 import { BAKED_IN_ZEN_CONTRACT } from "./sources/opencode-contract.ts";
-import type { ZenCapabilities } from "./sources/opencode-config.ts";
+import type { ZenCapabilities } from "./sources/opencode-catalog.ts";
 import { toProviderModel } from "./mapping.ts";
 import type { ModelCapabilities } from "./capabilities.ts";
 
@@ -32,7 +32,7 @@ const caps: ZenCapabilities = {
 	input: ["text"],
 	reasoning: true,
 	toggle: false,
-	source: "opencode",
+	source: "modelsdev",
 };
 
 /** The model a real zenfree chat request is built from (real registration path). */

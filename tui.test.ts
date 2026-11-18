@@ -109,8 +109,6 @@ describe("formatZenStatus", () => {
 			timestamps: { version: now - 3 * 60_000, lineup: now - 2 * 60_000 },
 			cliVersion: "2.0.18",
 			baseUrl: "https://opencode.ai/inference/openai/v1",
-			authMode: "apiKey",
-			apiKeyMasked: "oc_sk_…abcd",
 			minIntervalMinutes: 30,
 			capabilitiesCoveredCount: 8,
 			capabilitiesLineupCount: 8,
@@ -122,10 +120,10 @@ describe("formatZenStatus", () => {
 		expect(text).toContain("8/8 models covered");
 		expect(text).toContain("lineup: synced 2m ago");
 		expect(text).toContain("gateway: https://opencode.ai/inference/openai/v1");
-		expect(text).toContain("auth: apiKey (oc_sk_…abcd)");
+		expect(text).toContain("auth: anonymous");
 	});
 
-	it("falls back to the baked-in marker and no-auth line", () => {
+	it("falls back to the baked-in marker and the anonymous line", () => {
 		const text = formatZenStatus({
 			contractSource: "baked-in",
 			timestamps: {},
@@ -135,41 +133,8 @@ describe("formatZenStatus", () => {
 			freeCount: 0,
 		});
 		expect(text).toContain("baked-in");
-		expect(text).toContain("auth: none");
-		// Both auth methods must be discoverable from the empty state.
-		expect(text).toMatch(/workspace key/i);
-		expect(text).toMatch(/sign in/i);
+		expect(text).toContain("auth: anonymous");
+		expect(text).toMatch(/no key or token/i);
 	});
 
-	it("renders an OAuth credential as auto-refreshing, with its expiry", () => {
-		const now = 1_000_000_000_000;
-		const text = formatZenStatus({
-			contractSource: "config",
-			timestamps: { lineup: now - 60_000 },
-			cliVersion: "2.0.18",
-			authMode: "oauth",
-			tokenExpiresAt: now + 58 * 60_000,
-			minIntervalMinutes: 30,
-			capabilitiesCoveredCount: 1,
-			capabilitiesLineupCount: 1,
-			freeCount: 1,
-		}, now);
-		expect(text).toContain("auth: oauth (auto-refreshing · expires in 58m)");
-		expect(text).not.toContain("key");
-	});
-
-	it("marks an expired OAuth token rather than pretending it is fresh", () => {
-		const now = 1_000_000_000_000;
-		const text = formatZenStatus({
-			contractSource: "config",
-			timestamps: {},
-			authMode: "oauth",
-			tokenExpiresAt: now - 60_000,
-			minIntervalMinutes: 30,
-			capabilitiesCoveredCount: 0,
-			capabilitiesLineupCount: 0,
-			freeCount: 0,
-		}, now);
-		expect(text).toContain("auth: oauth (auto-refreshing · expired)");
-	});
 });

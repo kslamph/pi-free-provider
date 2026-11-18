@@ -218,11 +218,9 @@ const zenContext = {
 	messages: [{ role: "user", timestamp: 42, content: "hello there" }],
 } as never;
 
-function zenDeps(cred: Credential | undefined) {
+function zenDeps() {
 	return {
-		getCredential: () => cred,
 		getContract: () => zenContract,
-		onInvalidated: vi.fn(),
 		onVersionStale: vi.fn(),
 		ensureSidecar: () => Promise.resolve(undefined),
 		notify: vi.fn(),
@@ -237,13 +235,12 @@ describe("createZenfreeStream", () => {
 	it("sends the keyless v2.1.4 shape: public bearer, affinity headers, project id", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		const stream = createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }));
+		const stream = createZenfreeStream(zenDeps());
 		const events = await collect(stream(zenModelCompletions, zenContext));
 		expect(events.map((e) => e.type)).toEqual(["start", "done"]);
 		const options = impl.calls[0]!.options as { apiKey?: string; headers: Record<string, string> };
 		const headers = options.headers;
-		// Keyless: the workspace key never reaches the gateway (its free quota is
-		// exhausted server-side); `Bearer public` is the official keyless sentinel.
+		// `Bearer public` selects anonymous access.
 		expect(headers.Authorization).toBe("Bearer public");
 		expect(options.apiKey).toBe("public");
 		expect(headers["x-opencode-client"]).toBe("cli");
@@ -273,26 +270,33 @@ describe("createZenfreeStream", () => {
 		expect(fourth["x-opencode-request"]).not.toBe(third["x-opencode-request"]);
 	});
 
-	it("routes through the bun sidecar by swapping the model baseUrl", async () => {
+	it("ignores the model base URL in both Bun and direct fallback paths", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
 		const deps: ZenStreamDeps = {
-			...zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }),
+			...zenDeps(),
 			ensureSidecar: () => Promise.resolve("http://127.0.0.1:9911"),
 		};
-		const directModel = { id: "zenfree/big-pickle", api: "openai-completions", baseUrl: "https://opencode.ai/inference/openai/v1" } as never;
+		const directModel = { id: "zenfree/big-pickle", api: "openai-completions", baseUrl: "https://unused.example/v1", headers: { authorization: "Bearer legacy" } } as never;
 		await collect(createZenfreeStream(deps)(directModel, zenContext));
 		expect((impl.calls[0]!.model as { baseUrl: string }).baseUrl).toBe("http://127.0.0.1:9911");
-		// No sidecar: the model's own baseUrl is used unchanged.
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(directModel, zenContext));
-		expect((impl.calls[1]!.model as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v1");
+		// No sidecar: the same fixed upstream is used, not the model's override.
+		await collect(createZenfreeStream(zenDeps())(directModel, zenContext, {
+			apiKey: "legacy", headers: { authorization: "Bearer legacy", "X-OpenCode-Org-Id": "legacy" },
+		}));
+		const fallback = impl.calls[1]!;
+		expect(fallback.model).toMatchObject({ baseUrl: "https://opencode.ai/inference/openai/v1", headers: zenContract.headers });
+		expect(fallback.options.apiKey).toBe("public");
+		expect(fallback.options.headers).toMatchObject({ Authorization: "Bearer public" });
+		expect(fallback.options.headers).not.toHaveProperty("authorization");
+		expect(fallback.options.headers).not.toHaveProperty("X-OpenCode-Org-Id");
 	});
 
 	it("routes a responses-api model through the responses impl with identity headers", async () => {
 		const completions = fakeImpl();
 		const responses = fakeImpl();
 		(getApiProvider as unknown as Mock).mockImplementation(implsFor(completions, responses));
-		const stream = createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }));
+		const stream = createZenfreeStream(zenDeps());
 		await collect(stream(zenModelResponses, zenContext));
 		expect(responses.calls).toHaveLength(1);
 		expect(completions.calls).toHaveLength(0);
@@ -301,16 +305,15 @@ describe("createZenfreeStream", () => {
 		expect(headers["x-opencode-request"]).toMatch(/^msg_/);
 	});
 
-	it("marks the credential invalid on 401 without retrying", async () => {
+	it("reports an anonymous 401 without retrying", async () => {
 		const impl = fakeImpl([
 			{ type: "start" } as AssistantMessageEvent,
 			{ type: "error", error: { errorMessage: "Unauthorized" } } as never,
 		]);
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		const deps = zenDeps();
 		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
 		expect(impl.calls).toHaveLength(1);
-		expect(deps.onInvalidated).toHaveBeenCalled();
 		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("401"));
 		expect(events.map((e) => e.type)).toEqual(["error"]);
 	});
@@ -321,43 +324,45 @@ describe("createZenfreeStream", () => {
 			{ type: "error", error: { errorMessage: "426 Upgrade Required: OpenCode 1.17.0 or newer is required" } } as never,
 		]);
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		const deps = zenDeps();
 		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
 		expect(deps.onVersionStale).toHaveBeenCalled();
 		expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("version"));
-		expect(deps.onInvalidated).not.toHaveBeenCalled();
 		expect(events.map((e) => e.type)).toEqual(["error"]);
 	});
 
-	it("relays a 403 FreeTierError with the agentic-shape hint, no invalidation", async () => {
+	it("relays a 403 FreeTierError with the agentic-shape hint", async () => {
 		const impl = fakeImpl([
 			{ type: "start" } as AssistantMessageEvent,
 			{ type: "error", error: { errorMessage: "403 FreeTierError: can only be used from within OpenCode" } } as never,
 		]);
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		const deps = zenDeps();
 		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
-		expect(deps.onInvalidated).not.toHaveBeenCalled();
 		expect(deps.notify).toHaveBeenCalledWith(expect.stringMatching(/agentic|tools/i));
 		expect(events.map((e) => e.type)).toEqual(["error"]);
 	});
 
-	it("relays a 429 quota error without invalidating", async () => {
+	it("relays a 429 quota error", async () => {
 		const impl = fakeImpl([
 			{ type: "start" } as AssistantMessageEvent,
 			{ type: "error", error: { errorMessage: "429 FreeUsageLimitError: IP quota exhausted" } } as never,
 		]);
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		const deps = zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" });
+		const deps = zenDeps();
 		await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
-		expect(deps.onInvalidated).not.toHaveBeenCalled();
 		expect(deps.onVersionStale).not.toHaveBeenCalled();
 	});
 
-	it("errors immediately without a credential", async () => {
-		const deps = zenDeps(undefined);
+	it("works without any credential: keyless public bearer", async () => {
+		const impl = fakeImpl();
+		(getApiProvider as unknown as Mock).mockReturnValue(impl);
+		const deps = zenDeps();
 		const events = await collect(createZenfreeStream(deps)(zenModelCompletions, zenContext));
-		expect(events.map((e) => e.type)).toEqual(["error"]);
+		expect(events.map((e) => e.type)).toEqual(["start", "done"]);
+		const options = impl.calls[0]!.options as { apiKey?: string; headers: Record<string, string> };
+		expect(options.apiKey).toBe("public");
+		expect(options.headers.Authorization).toBe("Bearer public");
 	});
 });
 // The free tier serves only agentic-shaped requests: streaming plus a tool set
@@ -407,7 +412,7 @@ describe("zenfree agentic-shape padding", () => {
 	it("declares read + shell on a toolless request and forbids calling them (chat transport)", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, toolless));
+		await collect(createZenfreeStream(zenDeps())(zenModelCompletions, toolless));
 		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
 		expect(impl.calls[0]!.options.toolChoice).toBe("none");
 	});
@@ -415,7 +420,7 @@ describe("zenfree agentic-shape padding", () => {
 	it("fills both roles for a one-tool request and leaves the real tool callable", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, oneTool));
+		await collect(createZenfreeStream(zenDeps())(zenModelCompletions, oneTool));
 		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0], "todowrite"]);
 		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
 	});
@@ -423,14 +428,14 @@ describe("zenfree agentic-shape padding", () => {
 	it("adds only the missing exec role when read is already declared", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, noExec));
+		await collect(createZenfreeStream(zenDeps())(zenModelCompletions, noExec));
 		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_EXEC_TOOLS[0], "read", "grep"]);
 	});
 
 	it("adds both roles when the session's tools are neither reader nor exec", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, noReader));
+		await collect(createZenfreeStream(zenDeps())(zenModelCompletions, noReader));
 		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0], "write", "edit"]);
 		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
 	});
@@ -438,7 +443,7 @@ describe("zenfree agentic-shape padding", () => {
 	it("keeps an already agentic request's tools and adds only the system pad", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, agentic));
+		await collect(createZenfreeStream(zenDeps())(zenModelCompletions, agentic));
 		const sent = (impl.calls[0]!.context as { messages: { role: string; content?: unknown }[] }).messages;
 		expect(sent[0]!.content).toBe(ZEN_OFFICIAL_SYSTEM_PROMPT);
 		expect(sent.slice(1)).toEqual((agentic as { messages: unknown[] }).messages);
@@ -455,14 +460,14 @@ describe("zenfree agentic-shape padding", () => {
 				{ role: "user", content: "hi", timestamp: 1 },
 			],
 		} as never;
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, official));
+		await collect(createZenfreeStream(zenDeps())(zenModelCompletions, official));
 		expect(impl.calls[0]!.context).toBe(official);
 	});
 
 	it("never forces tool_choice on the responses transport (only \"auto\" is accepted there)", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelResponses, toolless));
+		await collect(createZenfreeStream(zenDeps())(zenModelResponses, toolless));
 		expect(declaredTools(impl.calls[0]!.context)).toEqual([ZEN_PAD_READ_TOOL, ZEN_PAD_EXEC_TOOLS[0]]);
 		expect(impl.calls[0]!.options.toolChoice).toBeUndefined();
 	});
@@ -470,7 +475,7 @@ describe("zenfree agentic-shape padding", () => {
 	it("prepends the official prompt ahead of the original messages when padding", async () => {
 		const impl = fakeImpl();
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, toolless));
+		await collect(createZenfreeStream(zenDeps())(zenModelCompletions, toolless));
 		const sent = (impl.calls[0]!.context as { messages: { role: string; content?: unknown }[] }).messages;
 		expect(sent.map((m) => m.role)).toEqual(["system", "system", "user"]);
 		expect(sent[0]!.content).toBe(ZEN_OFFICIAL_SYSTEM_PROMPT);
@@ -491,7 +496,7 @@ describe("zenfree agentic-shape padding", () => {
 			} as unknown as AssistantMessageEvent,
 		]);
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		const events = await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, toolless));
+		const events = await collect(createZenfreeStream(zenDeps())(zenModelCompletions, toolless));
 		const done = events.find((e) => e.type === "done") as { reason: string; message: { stopReason: string; content: unknown[] } };
 		expect(done.reason).toBe("stop");
 		expect(done.message.stopReason).toBe("stop");
@@ -512,7 +517,7 @@ describe("zenfree agentic-shape padding", () => {
 			} as unknown as AssistantMessageEvent,
 		]);
 		(getApiProvider as unknown as Mock).mockReturnValue(impl);
-		const events = await collect(createZenfreeStream(zenDeps({ mode: "apiKey", apiKey: "oc_sk-x" }))(zenModelCompletions, oneTool));
+		const events = await collect(createZenfreeStream(zenDeps())(zenModelCompletions, oneTool));
 		const done = events.find((e) => e.type === "done") as { reason: string; message: { content: { name: string }[] } };
 		expect(done.reason).toBe("toolUse");
 		expect(done.message.content.map((c) => c.name)).toEqual(["todowrite"]);

@@ -22,7 +22,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
-import { formatAuthorization, formatZenAuthorization, isTokenStale, refreshClineToken } from "./auth.ts";
+import { formatAuthorization, isTokenStale, refreshClineToken } from "./auth.ts";
 import type { ContractResult } from "./contract.ts";
 import type { Credential } from "./state.ts";
 
@@ -210,6 +210,7 @@ import { createConversationIdentity } from "./sources/opencode-identity.ts";
 import { ZEN_OFFICIAL_SYSTEM_PROMPT } from "./sources/opencode-system-prompt.ts";
 import { turnKeyOf, zenProjectId } from "./sources/opencode-identity.ts";
 import type { ZenContractResult } from "./sources/opencode-contract.ts";
+import { ZEN_UPSTREAM_URL } from "./sources/opencode-endpoint.ts";
 
 const zenIdentity = createConversationIdentity();
 
@@ -219,10 +220,7 @@ export function resetZenConversation(reason: string): void {
 }
 
 export interface ZenStreamDeps {
-	getCredential(): Credential | undefined;
 	getContract(): ZenContractResult;
-	/** The credential was rejected (401) — clear it so /zenfree re-auths. */
-	onInvalidated(): void;
 	/** The gateway 426'd our client version — force a contract re-check. */
 	onVersionStale(): void;
 	/** Resolve the local Bun sidecar base URL (zen TLS-fingerprint gate; see sidecar.ts).
@@ -380,51 +378,31 @@ export function createZenfreeStream(deps: ZenStreamDeps) {
 
 		void (async () => {
 			try {
-				let cred = deps.getCredential();
-				if (!cred) {
-					emitError(out, model, "zenfree: no OpenCode credential configured — run /zenfree to sign in");
-					return;
-				}
-				if (cred.mode === "oauth" && cred.refreshToken && isTokenStale(cred)) {
-					const response = await fetch("https://opencode.ai/console/auth/device/token", {
-						method: "POST", headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ grant_type: "refresh_token", refresh_token: cred.refreshToken, client_id: "opencode-cli" }),
-					});
-					if (!response.ok) throw new Error(`OpenCode token refresh failed: HTTP ${response.status}`);
-					const token = (await response.json()) as { access_token: string; refresh_token: string; expires_in?: number };
-					cred = { ...cred, accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: Date.now() + (token.expires_in ?? 3600) * 1000 };
-				}
-
+				// zenfree is anonymous-only: no credential is read, stored, or sent.
+				// The official client sends `Authorization: Bearer public` and rides
+				// the anonymous per-IP quota; a key or token is never used.
 				const contract = deps.getContract();
 				const captured = { status: 0 };
 				const impl = getApiProvider(model.api) ?? fallback;
 				// Zen's gateway admits only Bun-shaped TLS clients (sidecar.ts); route
 				// through the local relay when available, else send directly from Node.
 				const sidecarBase = await deps.ensureSidecar().catch(() => undefined);
-				const target = (
-					sidecarBase ? ({ ...model, baseUrl: sidecarBase } as typeof model) : model
-				) as Model<Api>;
+				const target = { ...model, baseUrl: sidecarBase ?? ZEN_UPSTREAM_URL, headers: contract.headers };
 				const pad = padZenRequest(context);
 				const padChoice = pad ? padToolChoice(model, pad, options) : undefined;
-				// Keyless v2.1.4 shape (2026-10-24): the workspace-keyed free quota is
-				// exhausted server-side (429 FreeUsageLimitError "Subscribe to OpenCode
-				// Go"), while the official client with no opencode credential sends
-				// `Authorization: Bearer public` and rides the anonymous per-IP bucket
-				// (console handler: `rawZenApiKey === "public" → undefined`). Mirror it:
-				// public bearer, the v2.1 session-identity headers (session-id +
-				// affinity pair + project, sharing the conversation session id), and no
-				// org-id (keyless clients send none). The workspace key stays configured
-				// for lineup/config sync — it just never reaches the gateway.
+				// Anonymous v2.1.4 shape: `Authorization: Bearer public`, the official
+				// client's session-identity headers (session-id + affinity pair + project,
+				// sharing the conversation session id), and no org-id. No key or OAuth
+				// token is ever attached.
 				const session = zenIdentity.sessionId();
 				const request = zenIdentity.requestId(turnKeyOf(context.messages));
 				const attemptOptions: SimpleStreamOptions = {
 					...options,
 					...(padChoice !== undefined ? { toolChoice: padChoice } : {}),
-					apiKey: cred.mode === "oauth" ? formatZenAuthorization(cred).replace(/^Bearer /, "") : "public",
+					apiKey: "public",
 					headers: {
-						...options?.headers,
 						...contract.headers,
-						Authorization: cred.mode === "oauth" ? formatZenAuthorization(cred) : "Bearer public",
+						Authorization: "Bearer public",
 						"x-opencode-session": session,
 						"x-opencode-session-id": session,
 						"x-session-affinity": session,
@@ -442,17 +420,16 @@ export function createZenfreeStream(deps: ZenStreamDeps) {
 				let relayed = false;
 
 				const invalidate = (): void => {
-					deps.onInvalidated();
 					if (!invalidNotified) {
 						invalidNotified = true;
-						deps.notify("zenfree: credential rejected (401) — re-add your workspace key via /zenfree");
+						deps.notify("zenfree: anonymous request rejected (401) — anonymous access may be blocked on this network");
 					}
 				};
 
 				const handleProblem = (problem: string): boolean => {
 					if (!relayed && isUnauthorized(captured.status, problem)) {
 						invalidate();
-						emitError(out, model, "zenfree: credential rejected (401) — run /zenfree to re-add your key");
+						emitError(out, model, "zenfree: anonymous request rejected (401) — anonymous access may be blocked on this network");
 						return true;
 					}
 					if (!relayed && isUpgradeRequired(captured.status, problem)) {

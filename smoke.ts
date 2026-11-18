@@ -2,29 +2,25 @@
  * Live smoke test (never run in CI). Exercises the real path per source:
  * clinefree — credential validation, GitHub contract extraction, live lineup,
  * both capability feeds, per-model resolution, one tiny chat request.
- * zenfree — key validation, update-api contract, console-config lineup,
- * capability merge, transport split, one streaming agentic chat probe
- * (the free tier 403-rejects bare pings) and an optional Responses probe.
+ * zenfree — anonymous-only: update-api contract, models.dev lineup, capability
+ * merge, transport split, one streaming agentic chat probe (the free tier
+ * 403-rejects bare pings) and an optional Responses probe. Needs no key.
  *
- * Usage: CLINEFREE_SMOKE_KEY=sk-… ZENFREE_SMOKE_KEY=oc_sk_… node --experimental-strip-types smoke.ts
- * Exits 2 without either env var, 1 on any failed step.
+ * Usage: CLINEFREE_SMOKE_KEY=sk-… node --experimental-strip-types smoke.ts
+ * Exits 1 on any failed step.
  */
 
-import { validateCredential, validateZenKey } from "./auth.ts";
+import { validateCredential } from "./auth.ts";
 import { DEFAULT_CAPABILITIES, resolveCapabilities } from "./capabilities.ts";
 import { fetchModelsDevOpenRouter, fetchVercelGateway } from "./feeds.ts";
 import { createClineSource } from "./sources/cline.ts";
 import { createZenSource } from "./sources/opencode.ts";
+import { ZEN_UPSTREAM_URL } from "./sources/opencode-endpoint.ts";
 import { createMessageId, createSessionId, zenProjectId } from "./sources/opencode-identity.ts";
 import { createZenSidecar } from "./sidecar.ts";
 import { fmtTokens } from "./tui.ts";
 
 const key = process.env.CLINEFREE_SMOKE_KEY;
-const zenKey = process.env.ZENFREE_SMOKE_KEY;
-if (!key && !zenKey) {
-	console.error("refusing to run: set CLINEFREE_SMOKE_KEY and/or ZENFREE_SMOKE_KEY (never commit keys)");
-	process.exit(2);
-}
 
 let failures = 0;
 function report(name: string, ok: boolean, detail: string): void {
@@ -93,40 +89,27 @@ try {
 
 // ── zenfree (OpenCode Zen) ────────────────────────────────────────────────────
 
-if (zenKey) {
+{
 	const zenSource = createZenSource();
-
-	// z1. Key validation
-	try {
-		const verdict = await validateZenKey(zenKey);
-		report("validateZenKey (console config)", verdict === "ok", verdict);
-	} catch (error) {
-		report("validateZenKey (console config)", false, error instanceof Error ? error.message : String(error));
-	}
 
 	// z2. Contract via the official update service
 	const zenContract = await zenSource.refreshContract(true);
 	report(
 		"zen contract (update api)",
-		zenContract.source === "update-api" || zenContract.source === "config",
+		zenContract.source === "update-api",
 		`${zenContract.source} · ${zenContract.headers["User-Agent"]}${zenContract.warning ? ` · ${zenContract.warning}` : ""}`,
 	);
 
-	// z3. Live lineup + gateway facts from the console config
-	const zenCred = { mode: "apiKey" as const, apiKey: zenKey };
-	const zenLineup = await zenSource.fetchLineup(zenCred);
+	// z3. Live anonymous lineup + gateway URL
+	const zenLineup = await zenSource.fetchLineup();
 	const zenIds = zenLineup.map((e) => e.id);
 	report(
-		"zen lineup (config cost.input == 0)",
+		"zen lineup (models.dev cost.input == 0)",
 		zenIds.length > 0,
 		`${zenIds.length} free · ${zenIds.join(", ")}`,
 	);
-	const gatewayBase = zenSource.configBaseUrl() ?? zenContract.baseUrl;
-	report("zen gateway url", !!gatewayBase, `${gatewayBase}${zenSource.configBaseUrl() ? "" : " (from contract)"}`);
-	const orgHeaders = zenSource.configHeaders();
-	if (orgHeaders && Object.keys(orgHeaders).length > 0) {
-		report("zen prescribed headers", true, Object.keys(orgHeaders).join(", "));
-	}
+	const gatewayBase = ZEN_UPSTREAM_URL;
+	report("zen gateway url", !!gatewayBase, gatewayBase);
 
 	// z4. Capability merge per model + transport split
 	await zenSource.refreshCapabilities(zenIds);
@@ -205,42 +188,7 @@ if (zenKey) {
 		zenSidecar.stop();
 	}
 
-	// z4b. Control — the pre-2026-10-24 keyed shape (workspace key + org-id, no
-	//      v2.1 identity headers). Expected to draw the 429 FreeUsageLimitError
-	//      that motivated the keyless switch; if it ever passes again, the
-	//      workspace free allowance has recovered and the switch can be revisited.
 	const completionsModel = zenIds.find((id) => !id.startsWith("muse-spark-"));
-	if (completionsModel && zenSource.configBaseUrl()) {
-		try {
-			const response = await fetch(`${gatewayBase}/chat/completions`, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${zenKey}`,
-					...zenContract.headers,
-					...zenSource.configHeaders(),
-					"x-opencode-session": createSessionId(),
-					"x-opencode-request": createMessageId(),
-				},
-				body: JSON.stringify({
-					model: completionsModel,
-					messages: [{ role: "user", content: "reply with the single word: pong" }],
-					stream: true,
-					max_tokens: 256,
-					tools: ["read", "shell", "edit", "write"].map((name) => ({
-						type: "function",
-						function: { name, description: name, parameters: { type: "object", properties: {} } },
-					})),
-				}),
-				signal: AbortSignal.timeout(60_000),
-			});
-			const text = await response.text();
-			const expected = response.status === 429 && /FreeUsageLimit/i.test(text);
-			report(`zen control (keyed shape, expect 429)`, expected, `HTTP ${response.status} · ${text.slice(0, 90).replace(/\n/g, " ")}`);
-		} catch (error) {
-			report(`zen control (keyed shape, expect 429)`, false, error instanceof Error ? error.message : String(error));
-		}
-	}
 
 	// z5. One tiny streaming chat with the keyless v2.1.4 shape (Bearer public,
 	//     session-identity headers, prompt_cache_key) + agentic body.

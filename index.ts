@@ -12,17 +12,17 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext, Api } from "@earendil-works/pi-ai";
-import { runDeviceFlow, runOpenCodeDeviceFlow, validateCredential, validateZenCredential } from "./auth.ts";
+import { runDeviceFlow, validateCredential } from "./auth.ts";
 import { BAKED_IN_CONTRACT, type ContractResult } from "./contract.ts";
 import { DEFAULT_CONFIG, loadConfig, readCache, saveConfig, writeCache, zenfreeState, type ClinefreeConfig, type Credential } from "./state.ts";
 import { toProviderModel, type ProviderModel } from "./mapping.ts";
 import { type DesiredProvider, type MultiSyncDeps, type RegisteredState, diffModels, syncProviders } from "./registry.ts";
 import { createClinefreeStream, createZenfreeStream, resetConversation, resetZenConversation } from "./stream.ts";
 import { createZenSidecar } from "./sidecar.ts";
-import { createZenSource, type ZenSource } from "./sources/opencode.ts";
+import { createZenSource, ZEN_CONTRACT_REFRESH_MINUTES, ZEN_LINEUP_CACHE, type ZenSource } from "./sources/opencode.ts";
 import { BAKED_IN_ZEN_CONTRACT, type ZenContractResult } from "./sources/opencode-contract.ts";
-import type { ZenCapabilities } from "./sources/opencode-config.ts";
-import { validateZenKey } from "./auth.ts";
+import type { ZenCapabilities } from "./sources/opencode-catalog.ts";
+import { ZEN_UPSTREAM_URL } from "./sources/opencode-endpoint.ts";
 import { createClineSource, type ClineSource } from "./sources/cline.ts";
 import type { LineupEntry } from "./sources/types.ts";
 import { maskKey, registerClinefreeCommand, registerZenfreeCommand } from "./tui.ts";
@@ -184,7 +184,7 @@ export function buildZenTargets(opts: ZenTargetOpts): DesiredProvider[] {
 	for (const entry of opts.lineup) {
 		const api = opts.resolveTransport(entry.id);
 		const caps = opts.resolve(entry.id);
-		const model = toProviderModel(entry.id, caps, entry.name, { api, baseUrl: opts.contract.baseUrl, thinkingFormat: "openai", maxTokensField: "max_tokens" });
+		const model = toProviderModel(entry.id, caps, entry.name, { api, baseUrl: ZEN_UPSTREAM_URL, thinkingFormat: "openai", maxTokensField: "max_tokens" });
 		const providerId = api === "openai-responses" ? ZEN_RES_PROVIDER_ID : ZEN_PROVIDER_ID;
 		const group = groups.get(providerId) ?? { providerId, api, models: [] };
 		group.models.push(model);
@@ -196,7 +196,7 @@ export function buildZenTargets(opts: ZenTargetOpts): DesiredProvider[] {
 		register: (models: { id: string }[]) => {
 			opts.registerProvider(group.providerId, {
 				name: group.providerId === ZEN_RES_PROVIDER_ID ? ZEN_RES_PROVIDER_NAME : ZEN_PROVIDER_NAME,
-				baseUrl: opts.contract.baseUrl,
+				baseUrl: ZEN_UPSTREAM_URL,
 				// Real credential injected per-request by the custom streamSimple.
 				apiKey: "zenfree-managed",
 				api: group.api,
@@ -322,7 +322,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 		resetConversation(event.reason);
 		resetZenConversation(event.reason);
 		if (!config.auth) notify("clinefree: no credential — run /clinefree to sign in with a Cline account or API key");
-		if (!zenConfig.auth) notify("zenfree: no OpenCode credential — run /zenfree to sign in");
+		// zenfree needs no credential: the free tier is keyless (anonymous per-IP quota).
 		// Network refresh is deliberately detached from session_start. Cached
 		// providers remain usable while the live lineup warms in the background.
 		scheduleBackgroundSync();
@@ -336,36 +336,14 @@ export default function clinefree(pi: ExtensionAPI): void {
 	};
 	// ── zenfree (OpenCode Zen) — second source, fully independent failures ──
 
-	let zenConfig: ClinefreeConfig;
-	try {
-		zenConfig = zenfreeState.loadConfig();
-	} catch (error) {
-		console.error(`[zenfree] config load failed: ${error instanceof Error ? error.message : String(error)}`);
-		zenConfig = { ...DEFAULT_CONFIG, sync: { ...DEFAULT_CONFIG.sync } };
-	}
-
-	const zenSource: ZenSource = createZenSource({
-		// OpenCode Go's console connection exposes the Go-specific lineup
-		// (including contributor models) under the opencode-go provider block.
-		providerIds: ["opencode-go", "opencode"],
-		minIntervalMs: zenConfig.sync.minIntervalMinutes * 60_000,
-	});
+	const zenSource: ZenSource = createZenSource();
 	let zenCurrentContract: ZenContractResult =
-		zenfreeState.readCache<ZenContractResult>("contract.json") ?? BAKED_IN_ZEN_CONTRACT;
+		zenSource.cachedContract() ?? BAKED_IN_ZEN_CONTRACT;
 
 	const zenSidecar = createZenSidecar({ notify });
 	const zenStream = createZenfreeStream({
-		getCredential: () => zenConfig.auth,
 		getContract: () => zenCurrentContract,
 		ensureSidecar: () => zenSidecar.ensureSidecar(),
-		onInvalidated: () => {
-			zenConfig.auth = undefined;
-			try {
-				zenfreeState.saveConfig(zenConfig);
-			} catch {
-				// best-effort
-			}
-		},
 		onVersionStale: () => {
 			void zenSource
 				.refreshContract(true)
@@ -384,7 +362,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 		pi: pi as unknown as PiLike,
 		label: "zenfree",
 		notify,
-		notifyOnChange: zenConfig.sync.notifyOnChange,
+		notifyOnChange: true,
 		isCurrentModel: (id) => {
 			try {
 				return getModel?.()?.id === id;
@@ -396,12 +374,12 @@ export default function clinefree(pi: ExtensionAPI): void {
 	};
 
 	/**
-	 * Full zen sync: lineup first (it carries the authoritative gateway url),
-	 * then the contract — so a first registration uses the live config
-	 * baseURL, not the baked-in fallback — then caps, then registration.
+	 * Full zen sync: keyless lineup from models.dev first, then the contract —
+	 * so a first registration uses the live client version — then caps, then
+	 * registration.
 	 */
 	const zenSync = async (force = false, options: SyncRunOptions = {}): Promise<void> => {
-		const lineup = await zenSource.fetchLineup(zenConfig.auth, options.signal);
+		const lineup = await zenSource.fetchLineup(options.signal);
 		zenCurrentContract = await zenSource.refreshContract(force, options.signal);
 		const ids = lineup.map((entry) => entry.id);
 		const feeds = await zenSource.refreshCapabilities(ids, force, options.signal);
@@ -447,7 +425,7 @@ export default function clinefree(pi: ExtensionAPI): void {
 			const isCurrent = (): boolean => generation === backgroundGeneration && !controller.signal.aborted;
 			const task = Promise.allSettled([
 				config.auth ? fullSync(false, { signal: controller.signal, isCurrent }) : Promise.resolve(),
-				zenConfig.auth ? zenSync(false, { signal: controller.signal, isCurrent }) : Promise.resolve(),
+				zenSync(false, { signal: controller.signal, isCurrent }),
 			]);
 			void withSyncDeadline(task, controller)
 				.then((results) => {
@@ -471,30 +449,29 @@ export default function clinefree(pi: ExtensionAPI): void {
 	}
 
 	// Cached fast-path: register from the zenfree cache before any network.
-	if (zenConfig.auth) {
-		const cachedZenLineup = zenfreeState.readCache<{ models: Record<string, { name?: string }> }>("lineup.json");
-		if (cachedZenLineup && Object.keys(cachedZenLineup.models).length > 0) {
-			try {
-				const entries = Object.keys(cachedZenLineup.models).sort().map((id) => ({ id, name: cachedZenLineup.models[id]?.name }));
-				const targets = buildZenTargets({
-					lineup: entries,
-					resolve: (id) => zenSource.resolveCapabilities(id),
-					resolveTransport: (id) => zenSource.resolveTransport(id),
-					contract: zenCurrentContract,
-					streamSimple: zenStream as never,
-					registerProvider: (id, config) => (pi as unknown as PiLike).registerProvider(id, config),
-				});
-				for (const target of targets) target.register(target.models);
-				zenRegistered.providerIds = targets.map((t) => t.providerId);
-				zenRegistered.modelIds = entries.map((e) => e.id);
-			} catch (error) {
-				console.error(`[zenfree] cached registration failed: ${error instanceof Error ? error.message : String(error)}`);
-			}
+	// Keyless use is the default, so this no longer depends on a credential.
+	const cachedZenLineup = zenfreeState.readCache<{ models: Record<string, { name?: string }> }>(ZEN_LINEUP_CACHE);
+	if (cachedZenLineup && Object.keys(cachedZenLineup.models).length > 0) {
+		try {
+			const entries = Object.keys(cachedZenLineup.models).sort().map((id) => ({ id, name: cachedZenLineup.models[id]?.name }));
+			const targets = buildZenTargets({
+				lineup: entries,
+				resolve: (id) => zenSource.resolveCapabilities(id),
+				resolveTransport: (id) => zenSource.resolveTransport(id),
+				contract: zenCurrentContract,
+				streamSimple: zenStream as never,
+				registerProvider: (id, config) => (pi as unknown as PiLike).registerProvider(id, config),
+			});
+			for (const target of targets) target.register(target.models);
+			zenRegistered.providerIds = targets.map((t) => t.providerId);
+			zenRegistered.modelIds = entries.map((e) => e.id);
+		} catch (error) {
+			console.error(`[zenfree] cached registration failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 
 	let lastZenLineup: { id: string; name?: string }[] =
-		Object.entries(zenfreeState.readCache<{ models: Record<string, { name?: string }> }>("lineup.json")?.models ?? {})
+		Object.entries(cachedZenLineup?.models ?? {})
 			.map(([id, m]) => ({ id, name: m?.name }))
 			.sort((a, b) => a.id.localeCompare(b.id));
 	registerZenfreeCommand(pi, {
@@ -509,11 +486,8 @@ export default function clinefree(pi: ExtensionAPI): void {
 				contractSource: status.contractSource,
 				timestamps: status.timestamps,
 				cliVersion: zenCurrentContract.versions?.cli,
-				baseUrl: zenCurrentContract.baseUrl,
-				authMode: zenConfig.auth?.mode,
-				apiKeyMasked: zenConfig.auth?.apiKey ? maskKey(zenConfig.auth.apiKey) : undefined,
-				tokenExpiresAt: zenConfig.auth?.expiresAt,
-				minIntervalMinutes: zenConfig.sync.minIntervalMinutes,
+				baseUrl: ZEN_UPSTREAM_URL,
+				minIntervalMinutes: ZEN_CONTRACT_REFRESH_MINUTES,
 				capabilitiesCoveredCount: (zenfreeState.readCache<{ coveredIds: string[] }>("capabilities.json")?.coveredIds ?? []).filter((id) => lineupIds.includes(id)).length,
 				capabilitiesLineupCount: lineupIds.length,
 				freeCount: lineupIds.length,
@@ -525,36 +499,6 @@ export default function clinefree(pi: ExtensionAPI): void {
 				return { id: entry.id, name: toProviderModel(entry.id, caps, entry.name).name, contextWindow: caps.contextWindow, maxTokens: caps.maxTokens, source: caps.source };
 			}),
 		history: () => zenfreeState.readCache<{ lastResult?: { added: string[]; removed: string[]; warnings: string[] } }>("state.json")?.lastResult,
-		setApiKey: async (key: string) => {
-			const verdict = await validateZenCredential({ mode: "apiKey", apiKey: key });
-			if (verdict !== "ok") {
-				return { ok: false, detail: verdict === "rejected" ? "rejected by opencode.ai (401/403)" : "network error — try again" };
-			}
-			zenConfig.auth = { mode: "apiKey", apiKey: key };
-			zenfreeState.saveConfig(zenConfig);
-			cancelBackgroundSync();
-			void zenSync(true);
-			return { ok: true, detail: "workspace key accepted" };
-		},
-		deviceFlow: async (onStatus: (message: string) => void) => {
-			try {
-				const cred = await runOpenCodeDeviceFlow({ onStatus });
-				const verdict = await validateZenCredential(cred);
-				if (verdict !== "ok") return { ok: false, detail: `rejected after sign-in (${verdict})` };
-				zenConfig.auth = cred;
-				zenfreeState.saveConfig(zenConfig);
-				cancelBackgroundSync();
-				void zenSync(true);
-				return { ok: true, detail: "OpenCode account accepted" };
-			} catch (error) {
-				return { ok: false, detail: error instanceof Error ? error.message : String(error) };
-			}
-		},
-		clearCredential: () => {
-				cancelBackgroundSync();
-			zenConfig.auth = undefined;
-			zenfreeState.saveConfig(zenConfig);
-		},
 		notify,
 	});
 

@@ -12,20 +12,18 @@
  * verbatim (path, headers, body, abort signal); responses stream back with the
  * framing headers Bun's fetch already consumed stripped.
  *
- * Run: bun zen-sidecar.ts          (ZENFREE_SIDECAR_PORT pins the port; default: random)
+ * Bun binds an available loopback port and reports it to the parent.
  */
 
-const UPSTREAM = "https://opencode.ai/inference/openai/v1";
-const port = Number(process.env.ZENFREE_SIDECAR_PORT ?? 0);
-
+import { ZEN_UPSTREAM_URL } from "./sources/opencode-endpoint.ts";
 const server = Bun.serve({
 	hostname: "127.0.0.1",
-	port,
+	port: 0,
 	// Long-lived SSE streams: cap Bun's per-connection idle timeout.
 	idleTimeout: 255,
 	fetch: async (req) => {
 		const url = new URL(req.url);
-		const target = UPSTREAM + url.pathname.replace(/^\/v1/, "") + url.search;
+		const target = ZEN_UPSTREAM_URL + url.pathname.replace(/^\/v1/, "") + url.search;
 		const headers = new Headers(req.headers);
 		// Let Bun's fetch pick its own framing/compression headers.
 		for (const hop of ["host", "content-length", "connection", "accept-encoding"]) headers.delete(hop);

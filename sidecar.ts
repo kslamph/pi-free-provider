@@ -14,7 +14,7 @@
  * only the transport changes. stream.ts swaps the model's baseUrl for the
  * sidecar's loopback URL before delegating to pi's adapter.
  *
- * Bun resolution: $ZENFREE_BUN → `bun` on PATH → ~/.bun/bin/bun. On Windows,
+ * Bun resolution: `bun` on PATH → ~/.bun/bin/bun. On Windows,
  * extension-qualified names (`bun.exe`, `bun.cmd`) and `%USERPROFILE%` are
  * checked as well. When Bun is
  * unavailable the manager resolves undefined (stream.ts then sends directly
@@ -66,14 +66,12 @@ export function bunInstallHint(platform = process.platform): string {
 		"zenfree: bun not found — the Bun relay cannot start, so requests fall back to plain Node and Zen answers 429.",
 		`  1) Install Bun:  ${install}`,
 		`  2) Restart pi, then retry (Bun in ${home} is also picked up mid-session).`,
-		`Bun already elsewhere? Set ZENFREE_BUN to its path. clinefree works without Bun.`,
+		"If Bun is installed elsewhere, put it on PATH. clinefree works without Bun.",
 	].join("\n");
 }
 
-/** Resolve the bun binary: $ZENFREE_BUN → PATH → ~/.bun/bin/bun. */
+/** Find Bun on PATH or in its standard per-user installation directory. */
 export function resolveBunPath(env: Record<string, string | undefined>, platform = process.platform): string | undefined {
-	const override = env.ZENFREE_BUN?.trim();
-	if (override && existsSync(override)) return override;
 	const binNames = platform === "win32" ? ["bun.exe", "bun.cmd", "bun"] : ["bun"];
 	const pathDelimiter = platform === "win32" ? ";" : delimiter;
 	const findBunIn = (dir: string): string | undefined => {

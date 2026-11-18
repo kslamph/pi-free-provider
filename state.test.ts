@@ -1,20 +1,23 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, readdirSync, statSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cacheDir, configPath, loadConfig, readCache, saveConfig, writeCache, clinefreeState, createStateStore, zenfreeState } from "./state.ts";
+import { cacheDir, configPath, loadConfig, readCache, saveConfig, writeCache, clinefreeState, zenfreeState } from "./state.ts";
 
 let tmp: string;
 
 beforeEach(() => {
 	tmp = mkdtempSync(join(tmpdir(), "clinefree-state-"));
+	process.env.PI_CODING_AGENT_DIR = join(tmp, "agent");
 	process.env.CLINEFREE_CONFIG = join(tmp, "config", "clinefree.json");
 	process.env.CLINEFREE_CACHE = join(tmp, "cache");
 });
 
 afterEach(() => {
 	rmSync(tmp, { recursive: true, force: true });
+	delete process.env.PI_CODING_AGENT_DIR;
+	delete process.env.ZENFREE_CONFIG;
+	delete process.env.ZENFREE_CACHE;
 	delete process.env.CLINEFREE_CONFIG;
 	delete process.env.CLINEFREE_CACHE;
 });
@@ -63,26 +66,15 @@ describe("state", () => {
 });
 
 describe("createStateStore", () => {
-	it("zenfree store uses its own paths and env overrides", () => {
-		process.env.ZENFREE_CONFIG = join(tmp, "config", "zenfree.json");
-		process.env.ZENFREE_CACHE = join(tmp, "zcache");
-		const zen = createStateStore({
-			configEnv: "ZENFREE_CONFIG",
-			cacheEnv: "ZENFREE_CACHE",
-			configDefault: join(homedir(), ".pi", "agent", "zenfree.json"),
-			cacheDefault: join(homedir(), ".pi", "agent", "zenfree", "cache"),
-		});
-		expect(zen.configPath()).toBe(join(tmp, "config", "zenfree.json"));
-		expect(zen.cacheDir()).toBe(join(tmp, "zcache"));
-		const cfg = zen.loadConfig();
-		expect(cfg.auth).toBeUndefined();
-		cfg.auth = { mode: "apiKey", apiKey: "oc-test" };
-		zen.saveConfig(cfg);
-		expect(zen.loadConfig().auth).toEqual({ mode: "apiKey", apiKey: "oc-test" });
-		zen.writeCache("x.json", { a: 1 });
-		expect(zen.readCache<{ a: number }>("x.json")).toEqual({ a: 1 });
-		delete process.env.ZENFREE_CONFIG;
-		delete process.env.ZENFREE_CACHE;
+	it("Zen only stores cache under Pi's agent directory", () => {
+		process.env.ZENFREE_CONFIG = join(tmp, "ignored.json");
+		process.env.ZENFREE_CACHE = join(tmp, "ignored-cache");
+		expect(zenfreeState.cacheDir()).toBe(join(tmp, "agent", "zenfree", "cache"));
+		expect(zenfreeState).not.toHaveProperty("loadConfig");
+		expect(zenfreeState).not.toHaveProperty("saveConfig");
+		zenfreeState.writeCache("x.json", { a: 1 });
+		expect(zenfreeState.readCache<{ a: number }>("x.json")).toEqual({ a: 1 });
+		expect(existsSync(join(tmp, "agent", "zenfree.json"))).toBe(false);
 	});
 
 	it("stores are isolated from each other", () => {

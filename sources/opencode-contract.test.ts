@@ -45,7 +45,6 @@ describe("buildZenContract", () => {
 		expect(c.headers["User-Agent"]).toBe("opencode/latest/2.0.18/cli");
 		expect(c.headers["x-opencode-client"]).toBe("cli");
 		expect(c.source).toBe("update-api");
-		expect(c.baseUrl).toBe("https://opencode.ai/inference/openai/v1");
 		expect(c.warning).toBeUndefined();
 	});
 
@@ -59,17 +58,11 @@ describe("buildZenContract", () => {
 		expect(garbage.source).toBe("baked-in");
 	});
 
-	it("prefers a provided baseUrl (live config value)", () => {
-		const c = buildZenContract("2.0.18", "https://opencode.ai/inference/openai/v2");
-		expect(c.baseUrl).toBe("https://opencode.ai/inference/openai/v2");
-		expect(c.source).toBe("config");
-	});
 });
 
 describe("BAKED_IN_ZEN_CONTRACT", () => {
-	it("pins the live-verified UA and gateway url", () => {
+	it("pins the live-verified UA", () => {
 		expect(BAKED_IN_ZEN_CONTRACT.headers["User-Agent"]).toBe("opencode/latest/2.0.18/cli");
-		expect(BAKED_IN_ZEN_CONTRACT.baseUrl).toBe("https://opencode.ai/inference/openai/v1");
 		expect(BAKED_IN_ZEN_CONTRACT.source).toBe("baked-in");
 		expect(MIN_CLI_VERSION).toBe("1.17.0");
 	});

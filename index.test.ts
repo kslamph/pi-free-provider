@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,12 +7,15 @@ let tmp: string;
 
 beforeEach(() => {
 	tmp = mkdtempSync(join(tmpdir(), "clinefree-import-"));
+	process.env.PI_CODING_AGENT_DIR = join(tmp, "agent");
+	mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 	process.env.CLINEFREE_CONFIG = join(tmp, "clinefree.json");
 	process.env.CLINEFREE_CACHE = join(tmp, "cache");
 });
 
 afterEach(() => {
 	rmSync(tmp, { recursive: true, force: true });
+	delete process.env.PI_CODING_AGENT_DIR;
 	delete process.env.CLINEFREE_CONFIG;
 	delete process.env.CLINEFREE_CACHE;
 });
@@ -31,15 +34,6 @@ import { buildZenTargets } from "./index.ts";
 import { BAKED_IN_ZEN_CONTRACT } from "./sources/opencode-contract.ts";
 
 describe("zen bootstrap", () => {
-	beforeEach(() => {
-		process.env.ZENFREE_CONFIG = join(tmp, "zenfree.json");
-		process.env.ZENFREE_CACHE = join(tmp, "zcache");
-	});
-	afterEach(() => {
-		delete process.env.ZENFREE_CONFIG;
-		delete process.env.ZENFREE_CACHE;
-	});
-
 	const LINEUP = [
 		{ id: "big-pickle", name: "Big Pickle" },
 		{ id: "mimo-v2.6-flash-free", name: "MiMo-V2.6-Flash Free" },
@@ -47,7 +41,7 @@ describe("zen bootstrap", () => {
 	];
 
 	function zenPieces() {
-		const caps = { contextWindow: 200_000, maxTokens: 32_000, input: ["text"] as ("text" | "image")[], reasoning: true, toggle: false, source: "opencode" as const };
+		const caps = { contextWindow: 200_000, maxTokens: 32_000, input: ["text"] as ("text" | "image")[], reasoning: true, toggle: false, source: "modelsdev" as const };
 		const registered: { id: string; config: Record<string, unknown> }[] = [];
 		const registerProvider = (id: string, config: unknown) => registered.push({ id, config: config as Record<string, unknown> });
 		return { caps, registered, registerProvider };
@@ -137,7 +131,6 @@ describe("zen bootstrap", () => {
 });
 
 describe("zenfree session_start wiring", () => {
-	let consolePayload: unknown;
 	let modelsdevPayload: unknown;
 	let routerCalls: string[];
 
@@ -146,13 +139,10 @@ describe("zenfree session_start wiring", () => {
 	}
 
 	function stubNetwork() {
-		const consoleConfig = JSON.parse(readFileSync(join(import.meta.dirname, "test-fixtures", "console-config.json"), "utf-8"));
-		consoleConfig.providers.opencode.settings.baseURL = "https://opencode.ai/inference/openai/v9";
 		const updateApi = JSON.parse(readFileSync(join(import.meta.dirname, "test-fixtures", "update-api.json"), "utf-8"));
 		const modelsdev = JSON.parse(readFileSync(join(import.meta.dirname, "test-fixtures", "modelsdev-opencode.json"), "utf-8"));
 		const fetcher = (async (url: string) => {
 			routerCalls.push(String(url));
-			if (String(url).includes("/api/v2/config")) return new Response(JSON.stringify(consolePayload ?? consoleConfig), { status: 200 });
 			if (String(url).includes("update/api")) return new Response(JSON.stringify(updateApi), { status: 200 });
 			if (String(url).includes("models.dev")) return new Response(JSON.stringify(modelsdevPayload ?? modelsdev), { status: 200 });
 			return new Response("nope", { status: 404 });
@@ -162,14 +152,7 @@ describe("zenfree session_start wiring", () => {
 
 	beforeEach(() => {
 		routerCalls = [];
-		consolePayload = undefined;
 		modelsdevPayload = undefined;
-		process.env.ZENFREE_CONFIG = join(tmp, "zenfree.json");
-		process.env.ZENFREE_CACHE = join(tmp, "zcache");
-		writeFileSync(process.env.ZENFREE_CONFIG, JSON.stringify({
-			auth: { mode: "apiKey", apiKey: "oc_sk_test" },
-			sync: { minIntervalMinutes: 30, notifyOnChange: true },
-		}));
 	});
 
 	afterEach(() => {
@@ -194,21 +177,45 @@ describe("zenfree session_start wiring", () => {
 		return { handlers, registered, unregistered };
 	}
 
-	it("syncs zen at session start even without a clinefree credential, registering under the live gateway url", async () => {
+	it("ignores the old Zen config and registers both transports with the fixed gateway URL", async () => {
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		writeFileSync(join(agentDir, "zenfree.json"), JSON.stringify({
+			auth: { mode: "apiKey", apiKey: "test-only" },
+			sync: { notifyOnChange: false, minIntervalMinutes: 999 },
+		}));
+		const cache = join(agentDir, "zenfree", "cache");
+		mkdirSync(cache, { recursive: true });
+		writeFileSync(join(cache, "lineup.json"), JSON.stringify({ models: { "workspace-only": { free: true } } }));
 		stubNetwork();
 		const { handlers, registered } = await boot();
+		expect(registered).toEqual([]);
 		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => void;
 		expect(handler({ reason: "new" }, fakeCtx())).toBeUndefined();
 		await vi.waitFor(() => expect(registered.find((r) => r.id === "zenfree")).toBeDefined());
 		const zen = registered.find((r) => r.id === "zenfree");
 		expect(zen).toBeDefined();
-		expect((zen!.config as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v9");
+		expect((zen!.config as { baseUrl: string }).baseUrl).toBe("https://opencode.ai/inference/openai/v1");
 		const modelIds = (zen!.config as { models: { id: string }[] }).models.map((m) => m.id);
 		expect(modelIds).toContain("big-pickle");
 		const zenRes = registered.find((r) => r.id === "zenfree.res");
 		expect(zenRes).toBeDefined();
 		expect((zenRes!.config as { api: string }).api).toBe("openai-responses");
 		expect((zenRes!.config as { models: { id: string }[] }).models.map((m) => m.id)).toEqual(["muse-spark-1.3-contributor-free"]);
+		// Anonymous-only: the console config (workspace overrides) is never fetched.
+		expect(routerCalls.some((url) => url.includes("/api/v2/config"))).toBe(false);
+	});
+
+	it("syncs Zen without creating a config file", async () => {
+		stubNetwork();
+		const { handlers, registered } = await boot();
+		const handler = handlers["session_start"] as (event: { reason: string }, ctx: never) => void;
+		handler({ reason: "new" }, fakeCtx());
+		await vi.waitFor(() => expect(registered.find((r) => r.id === "zenfree")).toBeDefined());
+		const zen = registered.find((r) => r.id === "zenfree");
+		const modelIds = (zen!.config as { models: { id: string }[] }).models.map((m) => m.id);
+		expect(modelIds).toContain("big-pickle");
+		expect(existsSync(join(process.env.PI_CODING_AGENT_DIR!, "zenfree.json"))).toBe(false);
+		expect(routerCalls.some((url) => url.includes("/api/v2/config"))).toBe(false);
 	});
 
 	it("unregisters the zen provider and prompts a switch when the free lineup empties", async () => {
@@ -218,8 +225,6 @@ describe("zenfree session_start wiring", () => {
 		const ctx = { ui: { notify: vi.fn() }, model: { id: "big-pickle" } } as never;
 		handler({ reason: "new" }, ctx);
 		await vi.waitFor(() => expect(registered.find((r) => r.id === "zenfree")).toBeDefined());
-		consolePayload = { providers: { opencode: { models: { paid: { cost: [{ input: 3, output: 1 }] } } } } };
-		// the composed lineup empties only when models.dev has no free models either
 		modelsdevPayload = {};
 		handler({ reason: "new" }, ctx);
 		await vi.waitFor(() => expect(unregistered).toContain("zenfree"));
@@ -232,8 +237,6 @@ describe("zenfree session_start wiring", () => {
 
 describe("clinefree registration shape", () => {
 	it("pins the official client's max_tokens cap field", async () => {
-		process.env.ZENFREE_CONFIG = join(tmp, "zenfree.json");
-		process.env.ZENFREE_CACHE = join(tmp, "zcache");
 		mkdirSync(process.env.CLINEFREE_CACHE!, { recursive: true });
 		writeFileSync(process.env.CLINEFREE_CONFIG!, JSON.stringify({ auth: { mode: "apiKey", apiKey: "sk-test" } }));
 		writeFileSync(
@@ -252,7 +255,5 @@ describe("clinefree registration shape", () => {
 		const cline = registered.find((r) => r.id === "clinefree");
 		const model = (cline!.config as { models: { compat?: Record<string, unknown> }[] }).models[0]!;
 		expect(model.compat).toMatchObject({ maxTokensField: "max_tokens" });
-		delete process.env.ZENFREE_CONFIG;
-		delete process.env.ZENFREE_CACHE;
 	});
 });

@@ -74,13 +74,11 @@ pi install ./pi-free-provider
 ```bash
 pi                      # start a session
 /clinefree              # → Auth → Paste API key | Sign in with Cline (device flow)
-/zenfree                # → Auth → Paste workspace key   (OpenCode Zen, optional)
 ```
 
-Credentials are stored locally (`~/.pi/agent/clinefree.json`,
-`~/.pi/agent/zenfree.json`, mode `0600`) — **nothing in this repo contains or
-receives a key.** Model ids then appear under `/model` as `clinefree/*`,
-`zenfree/*` and `zenfree.res/*`.
+Cline stores its credential locally in `~/.pi/agent/clinefree.json` (mode `0600`).
+Zen requires Bun but no setup: `zenfree/*` and `zenfree.res/*` appear under
+`/model` after the public catalog syncs.
 
 ---
 
@@ -110,7 +108,7 @@ pi remove npm:pi-free-provider
 | Symptom | Cause / fix |
 | --- | --- |
 | `npm ERR! 404` on `pi install npm:pi-free-provider` | Registry lag right after a release, or a bad version pin. Check `npm view pi-free-provider version`; drop the `@version` to take `latest`. |
-| `zenfree` models always answer `429 FreeUsageLimitError` | Bun is missing (or `$ZENFREE_BUN` is wrong), so the relay never started. The extension prints the fix on first use: 1) `curl -fsSL https://bun.sh/install | bash` 2) restart `pi`. Or set `ZENFREE_BUN=/path/to/bun` and restart. `clinefree` is unaffected. |
+| `zenfree` models always answer `429 FreeUsageLimitError` | Check that Bun is installed and discoverable on `PATH` or in its standard per-user location. See [Bun setup](./README.md#bun-required-for-zenfree). |
 | Clone succeeds but the extension seems absent | Restart pi or `/reload`; confirm with `pi list` and `pi config`. |
 | `Permission denied (publickey)` on the SSH form | That form is only needed for push access — use the `git:github.com/…` or npm form instead. |
 | Want to read/tweak the source first | Clone it and install the local path: `git clone https://github.com/kslamph/pi-free-provider.git && pi install ./pi-free-provider` |

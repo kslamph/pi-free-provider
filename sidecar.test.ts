@@ -40,15 +40,13 @@ function bunEnv(withBun = true, overrides: Record<string, string> = {}): Record<
 	if (!withBun) return { HOME: home, PATH: "/nonexistent", ...overrides };
 	const stub = join(home, "bun");
 	writeFileSync(stub, "#!/bin/sh\n");
-	return { HOME: home, PATH: "/nonexistent", ZENFREE_BUN: stub, ...overrides };
+	return { HOME: home, PATH: home, ...overrides };
 }
 
 describe("resolveBunPath", () => {
-	it("prefers ZENFREE_BUN when the file exists", () => {
-		const home = mkdtempSync(join(tmpdir(), "zen-sidecar-bun-"));
-		const bun = join(home, "bun");
-		writeFileSync(bun, "#!/bin/sh\n");
-		expect(resolveBunPath({ ...bunEnv(false), ZENFREE_BUN: bun })).toBe(bun);
+	it("finds Bun on PATH and ignores the former override", () => {
+		const env = bunEnv();
+		expect(resolveBunPath({ ...env, ZENFREE_BUN: import.meta.filename })).toBe(join(env.HOME!, "bun"));
 	});
 
 	it("falls back to ~/.bun/bin/bun", () => {
@@ -82,7 +80,7 @@ describe("bunInstallHint", () => {
 		expect(hint).toMatch(/1\) Install Bun/);
 		expect(hint).toMatch(/2\) Restart pi/);
 		expect(hint).toContain("~/.bun/bin");
-		expect(hint).toContain("ZENFREE_BUN");
+		expect(hint).toContain("PATH");
 	});
 
 	it("uses PowerShell and %USERPROFILE% on Windows", () => {

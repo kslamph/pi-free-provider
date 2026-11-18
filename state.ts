@@ -1,11 +1,8 @@
 /**
  * Config + cache state for the clinefree/zenfree extension family.
  *
- * Each source owns a namespaced store (see `clinefreeState` / `zenfreeState`):
- * config lives at `~/.pi/agent/<name>.json` (env override per store) with mode
- * 0600 — it holds the credential. Cache lives under `~/.pi/agent/<name>/cache/`
- * and holds the synced contract / lineup / capabilities. All writes are atomic:
- * write a temp file in the same directory, then rename.
+ * Cline has a credential config and a cache. Zen only has an internal cache
+ * under Pi's agent directory. Writes use a temp file followed by rename.
  */
 
 import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
@@ -37,7 +34,7 @@ export const DEFAULT_CONFIG: ClinefreeConfig = {
 	sync: { minIntervalMinutes: 30, notifyOnChange: true },
 };
 
-/** A namespace-scoped config + cache store: one instance per source (clinefree, zenfree). */
+/** Cline's config and cache store. */
 export interface StateStore {
 	configPath(): string;
 	cacheDir(): string;
@@ -54,14 +51,26 @@ export interface StateNamespace {
 	cacheDefault: string;
 }
 
-export function createStateStore(ns: StateNamespace): StateStore {
+/** Pi's agent/config directory: `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. */
+export function piAgentDir(): string {
+	return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+}
+
+function createCacheStore(cacheDir: () => string): Pick<StateStore, "cacheDir" | "readCache" | "writeCache"> {
 	return {
-		configPath: () => process.env[ns.configEnv] ?? ns.configDefault,
-		cacheDir: () => process.env[ns.cacheEnv] ?? ns.cacheDefault,
-		loadConfig: () => loadConfigAt(process.env[ns.configEnv] ?? ns.configDefault),
-		saveConfig: (cfg) => saveConfigAt(process.env[ns.configEnv] ?? ns.configDefault, cfg),
-		readCache: <T>(name: string) => readJson(join(process.env[ns.cacheEnv] ?? ns.cacheDefault, name)) as T | undefined,
-		writeCache: (name, data) => writeJsonAtomic(join(process.env[ns.cacheEnv] ?? ns.cacheDefault, name), data),
+		cacheDir,
+		readCache: <T>(name: string) => readJson(join(cacheDir(), name)) as T | undefined,
+		writeCache: (name, data) => writeJsonAtomic(join(cacheDir(), name), data),
+	};
+}
+
+export function createStateStore(ns: StateNamespace): StateStore {
+	const configPath = () => process.env[ns.configEnv] ?? ns.configDefault;
+	return {
+		...createCacheStore(() => process.env[ns.cacheEnv] ?? ns.cacheDefault),
+		configPath,
+		loadConfig: () => loadConfigAt(configPath()),
+		saveConfig: (cfg) => saveConfigAt(configPath(), cfg),
 	};
 }
 
@@ -72,12 +81,7 @@ export const clinefreeState = createStateStore({
 	cacheDefault: join(homedir(), ".pi", "agent", "clinefree", "cache"),
 });
 
-export const zenfreeState = createStateStore({
-	configEnv: "ZENFREE_CONFIG",
-	cacheEnv: "ZENFREE_CACHE",
-	configDefault: join(homedir(), ".pi", "agent", "zenfree.json"),
-	cacheDefault: join(homedir(), ".pi", "agent", "zenfree", "cache"),
-});
+export const zenfreeState = createCacheStore(() => join(piAgentDir(), "zenfree", "cache"));
 
 /** Write `data` as JSON at `path` atomically (temp file + rename in the same dir). */
 function writeJsonAtomic(path: string, data: unknown): void {
@@ -109,12 +113,9 @@ function loadConfigAt(path: string): ClinefreeConfig {
 		created = true;
 	}
 	const parsed = created ? DEFAULT_CONFIG : readJson(path);
-	if (!parsed || typeof parsed !== "object") return { ...DEFAULT_CONFIG };
-	const cfg = parsed as Partial<ClinefreeConfig>;
-	return {
-		auth: cfg.auth,
-		sync: { ...DEFAULT_CONFIG.sync, ...cfg.sync },
-	};
+	const cfg = parsed && typeof parsed === "object" ? (parsed as Partial<ClinefreeConfig>) : DEFAULT_CONFIG;
+	const sync = { ...DEFAULT_CONFIG.sync, ...cfg.sync };
+	return { auth: cfg.auth, sync };
 }
 
 function saveConfigAt(path: string, cfg: ClinefreeConfig): void {

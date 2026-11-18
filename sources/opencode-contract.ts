@@ -13,21 +13,18 @@ import { compareSemver } from "../github.ts";
 import { fetchWithTimeout } from "../network.ts";
 
 export const UPDATE_API_URL = "https://opencode.ai/update/api/latest/cli";
-export const DEFAULT_ZEN_BASE_URL = "https://opencode.ai/inference/openai/v1";
 /** The free tier 426-rejects User-Agent versions below this (observed live 2026-09-17). */
 export const MIN_CLI_VERSION = "1.17.0";
 const BAKED_CLI_VERSION = "2.0.18";
 
 export interface ZenContractResult {
-	baseUrl: string;
 	headers: Record<string, string>;
 	versions: { cli: string };
-	source: "update-api" | "config" | "baked-in";
+	source: "update-api" | "baked-in";
 	warning?: string;
 }
 
 export const BAKED_IN_ZEN_CONTRACT: ZenContractResult = {
-	baseUrl: DEFAULT_ZEN_BASE_URL,
 	headers: {
 		"x-opencode-client": "cli",
 		"User-Agent": `opencode/latest/${BAKED_CLI_VERSION}/cli`,
@@ -65,22 +62,21 @@ function isSemver(version: string): boolean {
  * the resolved one is missing, malformed, or below the live-verified floor
  * (a stale UA draws HTTP 426 — never send one on purpose).
  */
-export function buildZenContract(version: string | undefined, baseUrl?: string): ZenContractResult {
+export function buildZenContract(version: string | undefined): ZenContractResult {
 	const usable = version !== undefined && isSemver(version) && compareSemver(version, BAKED_CLI_VERSION) >= 0;
 	if (!usable) {
 		const warning =
 			version === undefined
 				? "zenfree: update service unreachable; using baked-in client version"
 				: `zenfree: resolved client version "${version}" is malformed or older than the baked-in ${BAKED_CLI_VERSION}; using baked-in`;
-		return { ...BAKED_IN_ZEN_CONTRACT, ...(baseUrl !== undefined ? { baseUrl } : {}), warning };
+		return { ...BAKED_IN_ZEN_CONTRACT, warning };
 	}
 	return {
-		baseUrl: baseUrl ?? DEFAULT_ZEN_BASE_URL,
 		headers: {
 			"x-opencode-client": "cli",
 			"User-Agent": `opencode/latest/${version}/cli`,
 		},
 		versions: { cli: version },
-		source: baseUrl !== undefined ? "config" : "update-api",
+		source: "update-api",
 	};
 }

@@ -8,8 +8,10 @@ refreshes itself on every session start instead of going stale in a config file:
 - **`clinefree`** — the free bucket on `api.cline.bot` (Cline's model router).
 - **`zenfree`** / **`zenfree.res`** — the free tier of OpenCode Zen.
 
-You bring your own credential (or use the device-flow login); nothing is shared
-and no quota is proxied through anyone else.
+`clinefree` needs your own credential (or the device-flow login). `zenfree` is
+anonymous-only: it never reads, stores, or sends a key or token, and uses
+OpenCode's anonymous per-IP free quota. Nothing is shared and no quota is
+proxied through anyone else.
 
 ```
 /model clinefree/reflection/beam-free
@@ -49,7 +51,7 @@ pi remove npm:pi-free-provider
 
 ## Sign in
 
-Both sources are optional and independent — install one credential, or both.
+Only `clinefree` needs a credential.
 
 ```
 /clinefree → Auth
@@ -65,23 +67,11 @@ Both routes reach the same free models — a pasted key is not a paid-only path.
 Pick by preference: a key is a single long-lived string, the device flow keeps
 tokens rotating and never stores a key.
 
-```
-/zenfree → Auth
-```
+The clinefree credential lives in `~/.pi/agent/clinefree.json` (mode `0600`).
 
-| Option | What it does |
-|---|---|
-| **Paste workspace key** | a key from [opencode.ai/auth](https://opencode.ai/auth) → workspace Keys |
-| **Sign in with OpenCode** | device-flow login against OpenCode Console |
-| **Clear credential** | forget it |
-
-Both routes are equivalent for the free tier — the key and the console token are
-entitled to the same free models, and both are served through the Bun relay, so
-`bun` is required either way. Pick by preference: a workspace key does not
-expire and is trivial to revoke, the device flow refreshes itself.
-
-Credentials live in `~/.pi/agent/clinefree.json` and `~/.pi/agent/zenfree.json`
-(mode `0600`). They are never written into a pi session, an export, or a repo.
+`zenfree` and `zenfree.res` work without setup once Bun is installed. They use
+anonymous access (`Authorization: Bearer public`) and discover models from the
+public OpenCode catalog on models.dev.
 
 ## Use
 
@@ -102,8 +92,7 @@ The exact current lineup is whatever the live feeds say — ask:
 ```
 
 Each entry shows its context window, output cap, and where those numbers came
-from. All of these models are zero-cost with a **daily per-account, per-model
-quota**; hitting it produces a `429`, which is a limit, not a credential problem.
+from. Zen uses an anonymous per-IP quota; Cline uses its own account quota.
 
 ## Status and refresh
 
@@ -113,7 +102,7 @@ quota**; hitting it produces a `429`, which is a limit, not a credential problem
 ```
 
 Shows the resolved client contract (the headers/version the upstream CLI sends),
-feed freshness, the credential (masked), and the account. Press **`r`** in the
+feed freshness, and authentication status. Press **`r`** in the
 Status panel to force a refresh — otherwise everything refreshes on its own:
 
 | What | When |
@@ -121,7 +110,6 @@ Status panel to force a refresh — otherwise everything refreshes on its own:
 | model lineup | every session start |
 | capability data (context/output/input) | once per newly seen model id, then cached |
 | upstream client contract | when older than 30 minutes |
-| zen credential token | automatically, shortly before it expires |
 
 The session starts from the last cached lineup; the live refresh runs in the
 background so a slow feed does not block Pi's prompt. Automatic metadata
@@ -144,8 +132,9 @@ Two steps:
 2. Restart pi, then retry the request. Bun in `~/.bun/bin` (`%USERPROFILE%\.bun\bin`)
    is also picked up mid-session, because the relay re-resolves Bun on every request.
 
-Resolution order: `$ZENFREE_BUN` → Bun on `PATH` (`bun.exe`/`bun.cmd` on
-Windows) → `~/.bun/bin/bun` (or `%USERPROFILE%\.bun\bin\bun.exe` on Windows).
+The extension finds Bun on `PATH` or in its standard per-user installation
+directory (`~/.bun/bin` or `%USERPROFILE%\.bun\bin`). The relay automatically
+binds an available local port.
 If Bun is missing, the extension prints exactly these two steps once and falls
 back to direct requests — which the gateway will most likely answer with `429`.
 `clinefree` is unaffected and needs no Bun.
@@ -154,26 +143,27 @@ back to direct requests — which the gateway will most likely answer with `429`
 
 | Path | Purpose |
 |---|---|
-| `~/.pi/agent/clinefree.json` / `~/.pi/agent/zenfree.json` | config + credential (`0600`) |
+| `~/.pi/agent/clinefree.json` | Cline config and credential (`0600`) |
 | `~/.pi/agent/clinefree/cache/` / `~/.pi/agent/zenfree/cache/` | contract, lineup, capabilities, sync history |
 
 | Variable | Effect |
 |---|---|
-| `CLINEFREE_CONFIG`, `CLINEFREE_CACHE` | relocate that source's files |
-| `ZENFREE_CONFIG`, `ZENFREE_CACHE` | relocate that source's files |
-| `ZENFREE_BUN` | path to the bun binary |
-| `ZENFREE_SIDECAR_PORT` | pin the relay's port (default: random) |
+| `CLINEFREE_CONFIG`, `CLINEFREE_CACHE` | relocate clinefree's files |
+| `PI_CODING_AGENT_DIR` | Pi's agent directory (default `~/.pi/agent`); Zen keeps its internal cache under it |
+
+Zen always uses the OpenCode upstream at `https://opencode.ai/inference/openai/v1`.
+The Bun relay forwards to that same fixed endpoint; there is no `baseUrl` setting.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| `429` "Free usage limit reached" on `zenfree` | bun missing/invalid (`ZENFREE_BUN`), or the model's daily quota is spent |
+| `429` "Free usage limit reached" on `zenfree` | Bun could not start, or the model's quota is spent |
 | `403` "only available via Cline product surfaces" / FreeTierError | client-shape gate; the extension pads the request itself — report it if it persists |
 | `426` | the upstream CLI version moved; the next contract refresh picks it up (`r` in Status) |
-| `401` | credential rejected — re-add it via `/… → Auth` |
+| `401` | anonymous requests should not 401 — check the network/proxy |
 | a model vanished from `/model` | upstream dropped it, or (zen) the catalog flags it deprecated; the lineup is live, not pinned |
-| no models at all | that source has no credential yet: `/clinefree → Auth` |
+| no models at all | `clinefree` has no credential (`/clinefree → Auth`); `zenfree` could not reach models.dev and has no cache |
 
 ## Development
 
@@ -184,7 +174,7 @@ npm run typecheck
 npm pack --dry-run   # check what actually ships (the Bun relay must be in it)
 
 # live smoke (never in CI): keys come from the environment
-CLINEFREE_SMOKE_KEY=sk-… ZENFREE_SMOKE_KEY=oc_sk_… node --experimental-strip-types smoke.ts
+node --experimental-strip-types smoke.ts
 ```
 
 Releases are cut by tagging: bump `version` in `package.json`, commit, then

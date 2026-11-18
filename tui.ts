@@ -67,11 +67,6 @@ function minutesIn(ts: number | undefined, now: number, intervalMs: number): str
 	return delta <= 0 ? "now (due)" : `in ${delta}m`;
 }
 
-function expiresIn(ts: number, now: number): string {
-	const delta = Math.round((ts - now) / 60_000);
-	return delta <= 0 ? "expired" : `expires in ${delta}m`;
-}
-
 export function formatStatus(s: StatusSnapshot, now = Date.now()): string {
 	const lines: string[] = [];
 	lines.push("clinefree status");
@@ -105,14 +100,10 @@ export function formatModels(rows: ModelRow[]): string {
 }
 
 export interface ZenStatusSnapshot {
-	contractSource: "update-api" | "config" | "baked-in" | "none";
+	contractSource: "update-api" | "baked-in" | "none";
 	timestamps: { version?: number; lineup?: number; capabilities?: number };
 	cliVersion?: string;
 	baseUrl?: string;
-	authMode?: "apiKey" | "oauth";
-	apiKeyMasked?: string;
-	/** OAuth only: when the stored access token stops being accepted. */
-	tokenExpiresAt?: number;
 	minIntervalMinutes: number;
 	capabilitiesCoveredCount: number;
 	capabilitiesLineupCount: number;
@@ -134,14 +125,7 @@ export function formatZenStatus(s: ZenStatusSnapshot, now = Date.now()): string 
 	);
 	lines.push(`  lineup: synced ${minutesAgo(s.timestamps.lineup, now)} · ${s.freeCount} free models`);
 	if (s.baseUrl) lines.push(`  gateway: ${s.baseUrl}`);
-	if (s.authMode === "apiKey") {
-		lines.push(`  auth: apiKey (${s.apiKeyMasked ?? "key"})`);
-	} else if (s.authMode === "oauth") {
-		const when = s.tokenExpiresAt === undefined ? "auto-refreshing" : `auto-refreshing · ${expiresIn(s.tokenExpiresAt, now)}`;
-		lines.push(`  auth: oauth (${when})`);
-	} else {
-		lines.push("  auth: none — choose Auth to paste a workspace key or sign in with OpenCode");
-	}
+	lines.push("  auth: anonymous — no key or token is read or sent (per-IP quota)");
 	return lines.join("\n");
 }
 
@@ -291,16 +275,13 @@ export interface ZenTuiDeps {
 	snapshot(): ZenStatusSnapshot;
 	modelRows(): ModelRow[];
 	history(): { added: string[]; removed: string[]; warnings: string[] } | undefined;
-	setApiKey(key: string): Promise<{ ok: boolean; detail: string }>;
-	deviceFlow(onStatus: (message: string) => void): Promise<{ ok: boolean; detail: string }>;
-	clearCredential(): void;
 	notify(message: string): void;
 }
 
-/** /zenfree — status, models, auth; press r in status to refresh. */
+/** /zenfree — status and models; press r in status to refresh. Keyless: no auth menu. */
 export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void {
 	pi.registerCommand("zenfree", {
-		description: "OpenCode Zen free models: status, models, auth",
+		description: "OpenCode Zen free models: status, models",
 		handler: async (_args, ctx) => {
 			const refreshNow = async (): Promise<void> => {
 				try {
@@ -317,7 +298,6 @@ export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void
 				const choice = await selectOne(ctx, "zenfree", [
 					{ value: "status", label: "Status" },
 					{ value: "models", label: "Models" },
-					{ value: "auth", label: "Auth" },
 				]);
 				if (choice === null) return;
 
@@ -327,28 +307,6 @@ export function registerZenfreeCommand(pi: ExtensionAPI, deps: ZenTuiDeps): void
 				}
 				if (choice === "models") {
 					await infoPanel(ctx, "models", () => formatModels(deps.modelRows()));
-					continue;
-				}
-				if (choice === "auth") {
-					const authChoice = await selectOne(ctx, "auth", [
-						{ value: "apikey", label: "Paste workspace key" },
-						{ value: "oauth", label: "Sign in with OpenCode" },
-						{ value: "clear", label: "Clear credential" },
-					]);
-					if (authChoice === "apikey") {
-						const key = (await ctx.ui.input("OpenCode workspace key", "oc_sk_…"))?.trim();
-						if (!key) continue;
-						const result = await deps.setApiKey(key);
-						deps.notify(result.ok ? `zenfree: key accepted (${result.detail})` : `zenfree: key rejected — ${result.detail}`);
-					} else if (authChoice === "oauth") {
-						const result = await deps.deviceFlow((message) => deps.notify(`zenfree: ${message}`));
-						deps.notify(result.ok ? `zenfree: signed in (${result.detail})` : `zenfree: sign-in failed — ${result.detail}`);
-					} else if (authChoice === "clear") {
-						if (await ctx.ui.confirm("Clear credential", "Forget the stored OpenCode credential?")) {
-							deps.clearCredential();
-							deps.notify("zenfree: credential cleared");
-						}
-					}
 					continue;
 				}
 			}
